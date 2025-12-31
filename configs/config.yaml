@@ -1,0 +1,50 @@
+log:
+  path: "./testdata/sample.log"
+  format: "combined"
+
+workers:
+  count: 16
+  buffer_size: 50000
+
+detection:
+  signatures:
+    enabled: true
+    patterns:
+      sqli: '(?i)(union|select|sleep|benchmark|or\s+1=1|drop\s+table)'
+      xss: '(?i)(<script|javascript:|alert\(|onerror=)'
+      traversal: '\.\.\/\.\.\/|\.\.\/etc\/passwd|\.\.\\.\.\\'
+
+  behavioral:
+    enabled: true
+    brute_force:
+      threshold: 10
+      window_seconds: 60
+      status_code: 401
+    rate_limit:
+      threshold: 100
+      window_seconds: 10
+
+threat_intel:
+  enabled: true
+  malicious_ips_file: "./testdata/malicious_ips.txt"
+  bloom_filter_size: 10000
+  bloom_false_positive_rate: 0.01
+
+output:
+  json:
+    enabled: false
+    path: "./output/alerts.json"
+    stdout: false
+  metrics:
+    enabled: true
+    port: ":9090"
+    path: "/metrics"
+
+tui:
+  enabled: true
+  refresh_interval_ms: 100
+  max_alerts_displayed: 50
+
+logging:
+  level: "info"
+  format: "console"

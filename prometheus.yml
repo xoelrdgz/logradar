@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: "logradar"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["logradar:9090"]
+        labels:
+          instance: "logradar-main"
+
+  - job_name: "logradar-demo"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["logradar-demo:9090"]
+        labels:
+          instance: "logradar-demo"

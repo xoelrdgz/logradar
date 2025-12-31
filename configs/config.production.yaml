@@ -1,0 +1,47 @@
+log:
+  path: "/var/log/nginx/access.log"
+  format: "combined"
+workers:
+  count: 32
+  buffer_size: 100000
+  submit_timeout_ms: 100
+  overflow_path: "/var/log/logradar/overflow.jsonl"
+  quarantine_path: "/var/log/logradar/quarantine.jsonl"
+detection:
+  signatures:
+    enabled: true
+    patterns:
+      sqli: '(?i)(union|select|sleep|benchmark|or\s+1=1|drop\s+table)'
+      xss: '(?i)(<script|javascript:|alert\(|onerror=)'
+      traversal: '\.\.\/\.\.\/|\.\.\/etc\/passwd|\.\.\\.\.\\'
+  behavioral:
+    enabled: true
+    brute_force:
+      threshold: 10
+      window_seconds: 60
+      status_code: 401
+
+    rate_limit:
+      threshold: 200
+      window_seconds: 10
+threat_intel:
+  enabled: true
+  malicious_ips_file: "/etc/logradar/malicious_ips.txt"
+  bloom_filter_size: 100000
+  bloom_false_positive_rate: 0.001
+output:
+  json:
+    enabled: true
+    path: "/var/log/logradar/alerts.json"
+    stdout: false
+  metrics:
+    enabled: true
+    port: ":9090"
+    path: "/metrics"
+tui:
+  enabled: false
+  refresh_interval_ms: 100
+  max_alerts_displayed: 50
+logging:
+  level: "info"
+  format: "json"
