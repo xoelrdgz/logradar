@@ -20,6 +20,17 @@ LogRadar is a high-performance, real-time threat detection system designed for H
 
 ---
 
+## Screenshots
+
+![LogRadar Dashboard](assets/ss1.png)
+*Real-time Threat Monitoring Dashboard*
+
+![LogRadar Top Attackers](assets/ss2.png)
+*Top Attackers, with their IP addresses and attack counts*
+
+![Analyzed Event](assets/ss3.png)
+*Analyzed event with detailed information*
+
 ## Features
 
 | Detection Layer | Capabilities |
