@@ -1,7 +1,6 @@
 # LogRadar
 
 [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [Features](#features) | [Quick Start](#quick-start) | [Log Formats](#log-formats) | [Configuration](#configuration) | [Hot Reload](#hot-reload) | [Deployment](#docker-deployment) | [Troubleshooting](#troubleshooting)
 
@@ -451,4 +450,4 @@ testdata/           # Test fixtures
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+GPLv3 License. See [LICENSE](LICENSE) for details.
