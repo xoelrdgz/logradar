@@ -1,3 +1,8 @@
+// Package app provides the concurrent worker pool for threat detection.
+//
+// The WorkerPool manages a fixed set of worker goroutines that process log entries
+// in parallel, applying threat detectors and dispatching alerts. It includes
+// resilience features like backpressure, dead-letter queues, and overflow handling.
 package app
 
 import (
@@ -12,52 +17,67 @@ import (
 	"github.com/xoelrdgz/logradar/internal/ports"
 )
 
+// ToxicMessage represents an entry that caused a worker panic.
+// Used for Dead Letter Queue (DLQ) processing and forensic analysis.
 type ToxicMessage struct {
-	Entry     *domain.LogEntry
-	PanicErr  interface{}
-	Timestamp time.Time
-	WorkerID  int
+	Entry     *domain.LogEntry // Clone of the problematic entry
+	PanicErr  interface{}      // The panic value
+	Timestamp time.Time        // When the panic occurred
+	WorkerID  int              // Which worker crashed
 }
 
+// WorkerPool manages concurrent log entry processing with threat detection.
+//
+// Features:
+//   - Fixed worker count for predictable resource usage
+//   - Backpressure with configurable timeouts
+//   - Dead Letter Queue for toxic message handling
+//   - Overflow to disk when channels saturate
+//   - Quarantine for messages causing panics
+//   - Automatic worker restart on panic
+//
+// Thread Safety: All public methods are safe for concurrent access.
 type WorkerPool struct {
-	workerCount int
-	inputChan   chan *domain.LogEntry
-	outputChan  chan *domain.Alert
-	detectors   []ports.ThreatDetector
-	alerters    []ports.Alerter
-	subscribers []ports.AlertSubscriber
-	metrics     *domain.AnalysisMetrics
-	bufferSize  int
+	workerCount int                     // Number of worker goroutines
+	inputChan   chan *domain.LogEntry   // Buffered input channel
+	outputChan  chan *domain.Alert      // Buffered alert output
+	detectors   []ports.ThreatDetector  // Detectors to apply
+	alerters    []ports.Alerter         // Alert output destinations
+	subscribers []ports.AlertSubscriber // Alert notification callbacks
+	metrics     *domain.AnalysisMetrics // Runtime metrics collector
+	bufferSize  int                     // Channel buffer size
 
-	submitTimeout   time.Duration
-	useBackpressure bool
+	submitTimeout   time.Duration // Max wait for channel space
+	useBackpressure bool          // Enable timeout-based backpressure
 
-	dlqChan    chan *ToxicMessage
-	dlqEnabled bool
+	dlqChan    chan *ToxicMessage // Dead Letter Queue channel
+	dlqEnabled bool               // DLQ feature flag
 
-	overflow        *OverflowWriter
-	overflowEntries atomic.Int64
-	overflowAlerts  atomic.Int64
+	overflow        *OverflowWriter // Overflow file writer
+	overflowEntries atomic.Int64    // Entries written to overflow
+	overflowAlerts  atomic.Int64    // Alerts written to overflow
 
-	quarantine *QuarantineWriter
+	quarantine *QuarantineWriter // Quarantine for toxic messages
 
-	wg       sync.WaitGroup
-	stopOnce sync.Once
-	stopChan chan struct{}
-	running  bool
-	mu       sync.RWMutex
+	wg       sync.WaitGroup // Tracks worker goroutines
+	stopOnce sync.Once      // Ensures single shutdown
+	stopChan chan struct{}  // Shutdown signal
+	running  bool           // Running state
+	mu       sync.RWMutex   // Protects running state and subscribers
 }
 
+// WorkerPoolConfig defines worker pool configuration options.
 type WorkerPoolConfig struct {
-	WorkerCount    int
-	BufferSize     int
-	SubmitTimeout  time.Duration
-	EnableDLQ      bool
-	DLQSize        int
-	OverflowPath   string
-	QuarantinePath string
+	WorkerCount    int           // Number of worker goroutines (default: 32)
+	BufferSize     int           // Input/output channel buffer (default: 50000)
+	SubmitTimeout  time.Duration // Backpressure timeout (default: 100ms)
+	EnableDLQ      bool          // Enable Dead Letter Queue (default: true)
+	DLQSize        int           // DLQ channel buffer (default: 1000)
+	OverflowPath   string        // Path for overflow file (empty disables)
+	QuarantinePath string        // Path for quarantine file (empty disables)
 }
 
+// DefaultWorkerPoolConfig returns production-ready default configuration.
 func DefaultWorkerPoolConfig() WorkerPoolConfig {
 	return WorkerPoolConfig{
 		WorkerCount:    32,
@@ -70,6 +90,16 @@ func DefaultWorkerPoolConfig() WorkerPoolConfig {
 	}
 }
 
+// NewWorkerPool creates a configured worker pool.
+//
+// Parameters:
+//   - config: Pool configuration options
+//   - detectors: Threat detectors to apply to each entry
+//   - alerters: Alert output destinations
+//   - metrics: Runtime metrics collector
+//
+// Returns:
+//   - Configured WorkerPool ready for Start()
 func NewWorkerPool(config WorkerPoolConfig, detectors []ports.ThreatDetector, alerters []ports.Alerter, metrics *domain.AnalysisMetrics) *WorkerPool {
 	if config.WorkerCount <= 0 {
 		config.WorkerCount = 4
@@ -123,6 +153,16 @@ func NewWorkerPool(config WorkerPoolConfig, detectors []ports.ThreatDetector, al
 	return wp
 }
 
+// Start launches worker goroutines and alert dispatcher.
+//
+// Parameters:
+//   - ctx: Context for lifecycle management
+//
+// Behavior:
+//   - Spawns WorkerCount worker goroutines
+//   - Spawns alert dispatcher goroutine
+//   - Updates metrics with worker count
+//   - Idempotent (safe to call multiple times)
 func (wp *WorkerPool) Start(ctx context.Context) {
 	wp.mu.Lock()
 	if wp.running {
@@ -151,11 +191,15 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 		Msg("Worker pool started")
 }
 
+// worker is the main processing loop for a single worker goroutine.
+// It reads entries from the input channel, applies detectors, and generates alerts.
+// Includes panic recovery with automatic restart.
 func (wp *WorkerPool) worker(ctx context.Context, id int) {
 	defer wp.wg.Done()
 
 	var currentEntry *domain.LogEntry
 
+	// Panic recovery with worker restart and toxic message handling
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error().
@@ -163,12 +207,14 @@ func (wp *WorkerPool) worker(ctx context.Context, id int) {
 				Int("worker_id", id).
 				Msg("Worker panic recovered")
 
+			// Write to quarantine file
 			if wp.quarantine != nil && wp.quarantine.Enabled() {
 				if err := wp.quarantine.WriteToxicMessage(id, r, currentEntry); err != nil {
 					log.Error().Err(err).Int("worker_id", id).Msg("Failed to quarantine toxic message")
 				}
 			}
 
+			// Send to DLQ for potential reprocessing
 			if wp.dlqEnabled && currentEntry != nil {
 				select {
 				case wp.dlqChan <- &ToxicMessage{
@@ -183,6 +229,7 @@ func (wp *WorkerPool) worker(ctx context.Context, id int) {
 				}
 			}
 
+			// Restart worker
 			wp.wg.Add(1)
 			go wp.worker(ctx, id)
 		}
@@ -207,6 +254,7 @@ func (wp *WorkerPool) worker(ctx context.Context, id int) {
 			currentEntry = entry
 			lineHasThreat := false
 
+			// Apply all detectors
 			for _, detector := range wp.detectors {
 				result := detector.Detect(ctx, entry)
 				if result.Detected {
@@ -219,6 +267,7 @@ func (wp *WorkerPool) worker(ctx context.Context, id int) {
 						result.Message,
 					)
 
+					// Add detector metadata
 					for k, v := range result.Details {
 						if str, ok := v.(string); ok {
 							alert.AddMetadata(k, str)
@@ -253,13 +302,17 @@ func (wp *WorkerPool) worker(ctx context.Context, id int) {
 	}
 }
 
+// sendAlert attempts to send an alert to the output channel.
+// Uses backpressure with timeout, falling back to overflow file.
 func (wp *WorkerPool) sendAlert(alert *domain.Alert) bool {
+	// Fast path: non-blocking send
 	select {
 	case wp.outputChan <- alert:
 		return true
 	default:
 	}
 
+	// Backpressure: wait with timeout
 	if wp.useBackpressure {
 		timer := time.NewTimer(wp.submitTimeout)
 		select {
@@ -279,6 +332,7 @@ func (wp *WorkerPool) sendAlert(alert *domain.Alert) bool {
 		}
 	}
 
+	// No backpressure: overflow immediately
 	if wp.overflow != nil && wp.overflow.Enabled() {
 		if err := wp.overflow.WriteAlert(alert); err != nil {
 			log.Error().Err(err).Msg("Failed to write alert to overflow")
@@ -290,6 +344,7 @@ func (wp *WorkerPool) sendAlert(alert *domain.Alert) bool {
 	return false
 }
 
+// alertDispatcher reads from the output channel and sends to alerters/subscribers.
 func (wp *WorkerPool) alertDispatcher(ctx context.Context) {
 	defer wp.wg.Done()
 
@@ -304,12 +359,14 @@ func (wp *WorkerPool) alertDispatcher(ctx context.Context) {
 				return
 			}
 
+			// Send to all alerters
 			for _, alerter := range wp.alerters {
 				if err := alerter.Send(ctx, alert); err != nil {
 					log.Debug().Err(err).Msg("Alert send failed")
 				}
 			}
 
+			// Notify all subscribers
 			wp.mu.RLock()
 			for _, sub := range wp.subscribers {
 				sub.OnAlert(alert)
@@ -319,6 +376,14 @@ func (wp *WorkerPool) alertDispatcher(ctx context.Context) {
 	}
 }
 
+// Submit attempts non-blocking entry submission with backpressure fallback.
+//
+// Parameters:
+//   - entry: LogEntry to process
+//
+// Returns:
+//   - true if submitted (channel, backpressure wait, or overflow)
+//   - false if pool not running or all fallbacks failed
 func (wp *WorkerPool) Submit(entry *domain.LogEntry) bool {
 	wp.mu.RLock()
 	running := wp.running
@@ -328,12 +393,14 @@ func (wp *WorkerPool) Submit(entry *domain.LogEntry) bool {
 		return false
 	}
 
+	// Fast path
 	select {
 	case wp.inputChan <- entry:
 		return true
 	default:
 	}
 
+	// Backpressure path
 	if wp.useBackpressure {
 		timer := time.NewTimer(wp.submitTimeout)
 		select {
@@ -353,6 +420,7 @@ func (wp *WorkerPool) Submit(entry *domain.LogEntry) bool {
 		}
 	}
 
+	// Overflow fallback
 	if wp.overflow != nil && wp.overflow.Enabled() {
 		if err := wp.overflow.WriteEntry(entry); err != nil {
 			log.Error().Err(err).Msg("Failed to write entry to overflow")
@@ -364,6 +432,15 @@ func (wp *WorkerPool) Submit(entry *domain.LogEntry) bool {
 	return false
 }
 
+// SubmitBlocking blocks until entry is submitted or context cancelled.
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - entry: LogEntry to process
+//
+// Returns:
+//   - true if submitted successfully
+//   - false if context cancelled or pool stopped
 func (wp *WorkerPool) SubmitBlocking(ctx context.Context, entry *domain.LogEntry) bool {
 	select {
 	case wp.inputChan <- entry:
@@ -375,21 +452,29 @@ func (wp *WorkerPool) SubmitBlocking(ctx context.Context, entry *domain.LogEntry
 	}
 }
 
+// Alerts returns the read-only alert output channel.
 func (wp *WorkerPool) Alerts() <-chan *domain.Alert {
 	return wp.outputChan
 }
+
+// DLQ returns the Dead Letter Queue channel for toxic message handling.
 func (wp *WorkerPool) DLQ() <-chan *ToxicMessage {
 	return wp.dlqChan
 }
 
+// OverflowEntries returns count of entries written to overflow file.
 func (wp *WorkerPool) OverflowEntries() int64 {
 	return wp.overflowEntries.Load()
 }
 
+// OverflowAlerts returns count of alerts written to overflow file.
 func (wp *WorkerPool) OverflowAlerts() int64 {
 	return wp.overflowAlerts.Load()
 }
 
+// Stop performs graceful shutdown of the worker pool.
+// Closes channels, waits for workers, and cleans up resources.
+// Idempotent via sync.Once protection.
 func (wp *WorkerPool) Stop() {
 	wp.stopOnce.Do(func() {
 		wp.mu.Lock()
@@ -434,19 +519,24 @@ func (wp *WorkerPool) Stop() {
 	})
 }
 
+// IsRunning returns true if the pool is actively processing.
 func (wp *WorkerPool) IsRunning() bool {
 	wp.mu.RLock()
 	defer wp.mu.RUnlock()
 	return wp.running
 }
 
+// QueueLength returns current entries waiting in input channel.
 func (wp *WorkerPool) QueueLength() int {
 	return len(wp.inputChan)
 }
+
+// QueueCapacity returns the input channel buffer size.
 func (wp *WorkerPool) QueueCapacity() int {
 	return wp.bufferSize
 }
 
+// QueueUtilization returns percentage of input channel capacity in use.
 func (wp *WorkerPool) QueueUtilization() float64 {
 	if wp.bufferSize == 0 {
 		return 0
@@ -454,18 +544,22 @@ func (wp *WorkerPool) QueueUtilization() float64 {
 	return float64(len(wp.inputChan)) / float64(wp.bufferSize) * 100
 }
 
+// AddDetector dynamically adds a threat detector.
+// Thread-safe for runtime detector updates.
 func (wp *WorkerPool) AddDetector(detector ports.ThreatDetector) {
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
 	wp.detectors = append(wp.detectors, detector)
 }
 
+// AddAlerter dynamically adds an alert output.
 func (wp *WorkerPool) AddAlerter(alerter ports.Alerter) {
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
 	wp.alerters = append(wp.alerters, alerter)
 }
 
+// AddSubscriber registers an alert notification callback.
 func (wp *WorkerPool) AddSubscriber(sub ports.AlertSubscriber) {
 	wp.mu.Lock()
 	defer wp.mu.Unlock()

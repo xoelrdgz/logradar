@@ -1,3 +1,10 @@
+// Package detection implements hybrid threat intelligence storage for LogRadar.
+//
+// This file provides scalable threat intelligence combining Bloom filter for fast
+// negative lookups, BoltDB for persistent storage, and LRU hot cache for frequently
+// accessed IPs. Supports loading from text files and zero-downtime updates.
+//
+// Thread Safety: All methods are safe for concurrent access.
 package detection
 
 import (

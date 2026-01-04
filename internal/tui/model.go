@@ -147,57 +147,6 @@ func (m *Model) AddAlert(alert *domain.Alert) {
 		m.Alerts = m.Alerts[:len(m.Alerts)-1]
 	}
 	m.Alerts = append(m.Alerts, alert)
-	// Note: IP counting is done in IncrementIPCounter, not here
-}
-
-func (m *Model) updateTopIPHeap(alert *domain.Alert) {
-	if !alert.SourceIP.IsValid() {
-		return
-	}
-
-	ip := alert.SourceIP.String()
-
-	m.ipCounters[ip]++
-	totalCount := m.ipCounters[ip]
-
-	if entry, exists := m.ipMap[ip]; exists {
-		entry.AlertCount = totalCount
-		entry.LastSeen = alert.Timestamp.Format("15:04:05")
-		hasType := false
-		for _, t := range entry.ThreatTypes {
-			if t == string(alert.ThreatType) {
-				hasType = true
-				break
-			}
-		}
-		if !hasType && len(entry.ThreatTypes) < 5 {
-			entry.ThreatTypes = append(entry.ThreatTypes, string(alert.ThreatType))
-		}
-
-		heap.Fix(m.ipHeap, entry.heapIndex)
-	} else {
-		if len(m.ipMap) >= m.MaxTrackedIPs && m.ipHeap.Len() > 0 {
-			minIdx := 0
-			minCount := (*m.ipHeap)[0].AlertCount
-			for i := 1; i < m.ipHeap.Len(); i++ {
-				if (*m.ipHeap)[i].AlertCount < minCount {
-					minCount = (*m.ipHeap)[i].AlertCount
-					minIdx = i
-				}
-			}
-			oldEntry := (*m.ipHeap)[minIdx]
-			heap.Remove(m.ipHeap, minIdx)
-			delete(m.ipMap, oldEntry.IP)
-		}
-		entry := &IPEntry{
-			IP:          ip,
-			AlertCount:  totalCount,
-			LastSeen:    alert.Timestamp.Format("15:04:05"),
-			ThreatTypes: []string{string(alert.ThreatType)},
-		}
-		m.ipMap[ip] = entry
-		heap.Push(m.ipHeap, entry)
-	}
 }
 
 func (m *Model) rebuildTopIPs() {

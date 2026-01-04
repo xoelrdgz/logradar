@@ -1,3 +1,10 @@
+// Package detection implements signature-based threat detection for LogRadar.
+//
+// This file provides pattern-based detection using regular expressions and the
+// Aho-Corasick algorithm for efficient multi-pattern matching. Detects SQLi, XSS,
+// path traversal, RCE, LFI, and Log4Shell attack patterns.
+//
+// Thread Safety: SignatureDetector is stateless and safe for concurrent Detect() calls.
 package detection
 
 import (
@@ -9,19 +16,22 @@ import (
 	"github.com/xoelrdgz/logradar/pkg/ahocorasick"
 )
 
+// Pattern represents a security signature with classification and severity.
 type Pattern struct {
-	Name                string
-	Regex               *regexp.Regexp
-	ThreatType          domain.ThreatType
-	RiskScore           int
-	Level               domain.AlertLevel
-	Keywords            []string
-	RequiresQueryString bool
+	Name                string            // Human-readable pattern name
+	Regex               *regexp.Regexp    // Compiled detection regex
+	ThreatType          domain.ThreatType // Attack category (SQLi, XSS, etc.)
+	RiskScore           int               // Severity rating 1-10
+	Level               domain.AlertLevel // Alert severity level
+	Keywords            []string          // Aho-Corasick pre-filter keywords
+	RequiresQueryString bool              // Only check if path has query string
 }
 
+// SignatureDetector performs pattern-based threat detection using Aho-Corasick
+// pre-filtering followed by regex matching for efficiency.
 type SignatureDetector struct {
-	patterns  []*Pattern
-	preFilter *ahocorasick.Matcher
+	patterns  []*Pattern           // Detection patterns
+	preFilter *ahocorasick.Matcher // Fast keyword pre-filter
 }
 
 func DefaultPatterns() []*Pattern {
@@ -197,6 +207,18 @@ func DefaultPatterns() []*Pattern {
 	}
 }
 
+// NewSignatureDetector creates a signature detector with the given patterns.
+//
+// Parameters:
+//   - patterns: Detection patterns (nil uses DefaultPatterns)
+//
+// Returns:
+//   - Configured SignatureDetector ready for Detect()
+//
+// Performance:
+//   - Builds Aho-Corasick automaton for O(n) keyword pre-filtering
+//   - Regex patterns only applied after keyword match
+//   - Pre-compiled patterns for zero runtime compilation
 func NewSignatureDetector(patterns []*Pattern) *SignatureDetector {
 	if len(patterns) == 0 {
 		patterns = DefaultPatterns()
@@ -222,6 +244,26 @@ func NewSignatureDetector(patterns []*Pattern) *SignatureDetector {
 	}
 }
 
+// Detect analyzes a log entry for signature-based threats.
+//
+// Parameters:
+//   - ctx: Context for cancellation (checked periodically)
+//   - entry: Parsed log entry to analyze
+//
+// Returns:
+//   - DetectionResult with Detected=true if threat found
+//   - DetectionResult.Details includes pattern name and matched location
+//
+// Analysis Flow:
+//  1. Build analysis target from path, headers, body, cookies
+//  2. Normalize input (lowercase, URL decode, null byte removal)
+//  3. Fast Aho-Corasick keyword check (returns early if no keywords)
+//  4. Apply regex patterns until first match
+//
+// Security Considerations:
+//   - Multi-pass URL decoding defeats layered encoding evasion
+//   - Case normalization prevents case-variant bypasses
+//   - Null byte removal defeats C-string termination attacks
 func (d *SignatureDetector) Detect(ctx context.Context, entry *domain.LogEntry) domain.DetectionResult {
 	if entry == nil {
 		return domain.NoDetection()
@@ -298,13 +340,31 @@ func (d *SignatureDetector) Detect(ctx context.Context, entry *domain.LogEntry) 
 	return domain.NoDetection()
 }
 
+// Name returns the detector identifier for logging and metrics.
 func (d *SignatureDetector) Name() string {
 	return "signature"
 }
+
+// Type returns the primary threat type this detector handles.
 func (d *SignatureDetector) Type() domain.ThreatType {
 	return domain.ThreatTypeUnknown
 }
 
+// AddPattern adds a new detection pattern at runtime.
+//
+// Parameters:
+//   - name: Human-readable pattern name
+//   - pattern: Regular expression string
+//   - threatType: Attack category
+//   - riskScore: Severity 1-10
+//   - level: Alert level
+//
+// Returns:
+//   - nil on success
+//   - Error if regex compilation fails
+//
+// Note: Pattern is appended without rebuilding Aho-Corasick filter.
+// For optimal performance, add patterns before starting detection.
 func (d *SignatureDetector) AddPattern(name, pattern string, threatType domain.ThreatType, riskScore int, level domain.AlertLevel) error {
 	regex, err := regexp.Compile(pattern)
 	if err != nil {
@@ -322,10 +382,25 @@ func (d *SignatureDetector) AddPattern(name, pattern string, threatType domain.T
 	return nil
 }
 
+// PatternCount returns the number of active detection patterns.
 func (d *SignatureDetector) PatternCount() int {
 	return len(d.patterns)
 }
 
+// normalizeForDetection prepares input for pattern matching.
+//
+// Parameters:
+//   - s: Input string
+//   - isQueryString: True if string contains query parameters
+//
+// Returns:
+//   - Normalized string with decoded chars and removed null bytes
+//
+// Normalization Steps:
+//  1. Remove null bytes (C-string termination attacks)
+//  2. Multi-pass URL decoding (layered encoding)
+//  3. Plus-to-space conversion (query strings)
+//  4. Unicode normalization (homograph attacks)
 func normalizeForDetection(s string, isQueryString bool) string {
 	if s == "" {
 		return s
@@ -344,6 +419,8 @@ func normalizeForDetection(s string, isQueryString bool) string {
 	return s
 }
 
+// removeNullBytes strips null bytes from input.
+// Prevents null byte injection attacks that terminate C-strings early.
 func removeNullBytes(s string) string {
 	if !strings.ContainsAny(s, "\x00") {
 		return s
@@ -351,6 +428,8 @@ func removeNullBytes(s string) string {
 	return strings.ReplaceAll(s, "\x00", "")
 }
 
+// urlDecodeMultiPass decodes URL-encoded characters up to maxPasses times.
+// Handles layered encoding where attackers encode the percent sign itself.
 func urlDecodeMultiPass(s string, maxPasses int) string {
 	decoded := s
 
@@ -369,6 +448,7 @@ func urlDecodeMultiPass(s string, maxPasses int) string {
 	return decoded
 }
 
+// percentDecode decodes a single layer of percent-encoding.
 func percentDecode(s string) string {
 	if !strings.Contains(s, "%") {
 		return s
@@ -398,6 +478,7 @@ func percentDecode(s string) string {
 	return result.String()
 }
 
+// unicodeReplacer maps fullwidth and homograph characters to ASCII equivalents.
 var unicodeReplacer = strings.NewReplacer(
 	"＜", "<", "＞", ">", "＆", "&", "＂", "\"", "＇", "'",
 	"（", "(", "）", ")", "／", "/", "＼", "\\",
@@ -410,6 +491,8 @@ var unicodeReplacer = strings.NewReplacer(
 	"«", "<", "»", ">",
 )
 
+// normalizeUnicode replaces fullwidth and homograph characters with ASCII.
+// Prevents homograph attacks using visually similar Unicode characters.
 func normalizeUnicode(s string) string {
 	hasUnicode := false
 	for i := 0; i < len(s); i++ {
@@ -425,6 +508,8 @@ func normalizeUnicode(s string) string {
 	return unicodeReplacer.Replace(s)
 }
 
+// hexVal converts a hex character to its numeric value (0-15).
+// Returns -1 for non-hex characters.
 func hexVal(c byte) int {
 	switch {
 	case c >= '0' && c <= '9':

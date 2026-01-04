@@ -1,3 +1,16 @@
+// Package output provides Prometheus metrics export for LogRadar.
+//
+// PrometheusMetrics implements observability metrics using client_golang.
+// Exposes counters, gauges, and histograms for throughput, alerts, and latency.
+//
+// Metrics exposed:
+//   - logradar_total_requests: Lines processed counter
+//   - logradar_threats_detected_total: Threats by type
+//   - logradar_processing_duration_seconds: Processing latency histogram
+//   - logradar_alerts_by_level_total: Alerts by severity
+//   - logradar_memory_bytes: Current heap allocation
+//
+// Thread Safety: All methods are safe for concurrent access.
 package output
 
 import (

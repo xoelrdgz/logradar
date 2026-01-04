@@ -1,3 +1,17 @@
+// Package input provides synthetic traffic generation for LogRadar demo mode.
+//
+// DemoGenerator creates realistic HTTP log entries mixing normal traffic with
+// attack patterns for testing and demonstration. Supports CLF and JSON output.
+//
+// Attack Types Generated:
+//   - SQL Injection: UNION-based, boolean-based, time-based
+//   - XSS: Script tags, event handlers, javascript: URIs
+//   - Path Traversal: ../ sequences, /etc/passwd access
+//   - RCE: Command injection with shell metacharacters
+//   - LFI: PHP wrappers (php://, data://, expect://)
+//   - Log4Shell: JNDI injection payloads in headers
+//
+// Thread Safety: Safe for concurrent access via mutex and atomic operations.
 package input
 
 import (
@@ -16,42 +30,52 @@ import (
 	"github.com/xoelrdgz/logradar/internal/domain"
 )
 
+// OutputFormat specifies the log entry format for generated traffic.
 type OutputFormat int
 
 const (
+	// FormatCLF generates Apache/Nginx Combined Log Format entries.
 	FormatCLF OutputFormat = iota
+	// FormatJSON generates structured JSON log entries.
 	FormatJSON
 )
 
+// DemoGenerator produces synthetic HTTP log entries for testing and demo.
+//
+// It generates a configurable mix of normal traffic and attack patterns,
+// allowing realistic testing of detection capabilities without production logs.
 type DemoGenerator struct {
-	rate         int
-	bufferSize   int
-	outputFormat OutputFormat
-	mu           sync.Mutex
-	running      bool
-	stopChan     chan struct{}
-	generated    atomic.Uint64
+	rate         int           // Target entries per second
+	bufferSize   int           // Output channel buffer size
+	outputFormat OutputFormat  // CLF or JSON format
+	mu           sync.Mutex    // Protects running state
+	running      bool          // Generation active flag
+	stopChan     chan struct{} // Shutdown signal
+	generated    atomic.Uint64 // Total entries generated (atomic)
 
-	normalIPs   []netip.Addr
-	attackerIPs []netip.Addr
-	normalPaths []string
-	attackPaths []string
-	normalUAs   []string
-	attackerUAs []string
+	normalIPs   []netip.Addr // Pool of legitimate client IPs
+	attackerIPs []netip.Addr // Pool of attacker IPs (VPS, Tor exits)
+	normalPaths []string     // Common legitimate request paths
+	attackPaths []string     // Attack payload paths
+	normalUAs   []string     // Legitimate browser User-Agents
+	attackerUAs []string     // Scanner/tool User-Agents
 
-	bodyPayloads   []string
-	headerPayloads []map[string]string
-	cookiePayloads []string
-	bufferPool     sync.Pool
+	bodyPayloads   []string            // POST body attack payloads
+	headerPayloads []map[string]string // Header injection payloads
+	cookiePayloads []string            // Cookie injection payloads
+	bufferPool     sync.Pool           // Reusable byte buffers
 }
 
+// DemoConfig configures the demo traffic generator.
 type DemoConfig struct {
-	Rate          int
-	BufferSize    int
-	AttackPercent int
-	Format        OutputFormat
+	Rate          int          // Target entries per second (default: 1000)
+	BufferSize    int          // Output channel buffer (default: 50000)
+	AttackPercent int          // Percentage of attack traffic (default: 15)
+	Format        OutputFormat // Output format (default: CLF)
 }
 
+// DefaultDemoConfig returns production-ready defaults for demo mode.
+// Generates ~1000 entries/sec with 15% attack traffic in CLF format.
 func DefaultDemoConfig() DemoConfig {
 	return DemoConfig{
 		Rate:          1000,
@@ -61,6 +85,16 @@ func DefaultDemoConfig() DemoConfig {
 	}
 }
 
+// NewDemoGenerator creates a demo traffic generator with the given config.
+//
+// Parameters:
+//   - config: Generation settings (rate, format, attack percentage)
+//
+// Returns:
+//   - Configured DemoGenerator ready for Start()
+//
+// The generator pre-allocates IP pools and payload lists for efficient
+// generation without runtime allocations in the hot path.
 func NewDemoGenerator(config DemoConfig) *DemoGenerator {
 	if config.Rate <= 0 {
 		config.Rate = 1000

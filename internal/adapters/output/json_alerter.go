@@ -1,3 +1,16 @@
+// Package output provides alert output adapters for LogRadar.
+//
+// This file implements alert destinations:
+//   - JSONAlerter: Buffered JSON output to file or stdout
+//   - MemoryAlerter: In-memory ring buffer for TUI display
+//
+// Features:
+//   - Buffered I/O for high throughput (64KB buffer)
+//   - Periodic automatic flushing (1 second)
+//   - File sync on flush for durability
+//   - Ring buffer for memory-bounded storage
+//
+// Thread Safety: All implementations are safe for concurrent Send() calls.
 package output
 
 import (
@@ -12,22 +25,45 @@ import (
 	"github.com/xoelrdgz/logradar/internal/domain"
 )
 
+// JSONAlerter writes alerts as JSON to file or stdout.
+//
+// Features:
+//   - Buffered writes for high throughput
+//   - Periodic flush every second
+//   - Optional pretty-printing
+//   - File sync on flush for durability
 type JSONAlerter struct {
-	writer    io.Writer
-	bufWriter *bufio.Writer
-	file      *os.File
-	pretty    bool
-	mu        sync.Mutex
-	encoder   *json.Encoder
-	stopFlush chan struct{}
+	writer    io.Writer     // Output destination
+	bufWriter *bufio.Writer // Buffered writer (64KB)
+	file      *os.File      // File handle (nil for stdout)
+	pretty    bool          // Pretty-print JSON flag
+	mu        sync.Mutex    // Protects writes
+	encoder   *json.Encoder // Reused encoder
+	stopFlush chan struct{} // Stop periodic flush
 }
 
+// JSONAlerterConfig configures JSON alert output.
 type JSONAlerterConfig struct {
-	FilePath string
-	Stdout   bool
-	Pretty   bool
+	FilePath string // Output file path (empty for discard)
+	Stdout   bool   // Write to stdout
+	Pretty   bool   // Pretty-print JSON
 }
 
+// NewJSONAlerter creates a JSON alert output.
+//
+// Parameters:
+//   - config: Output destination and format settings
+//
+// Returns:
+//   - Configured JSONAlerter
+//   - Error if file creation fails
+//
+// Output Priority:
+//  1. Stdout if config.Stdout is true
+//  2. File if config.FilePath is set
+//  3. io.Discard otherwise
+//
+// File Permissions: 0600 (owner read/write only)
 func NewJSONAlerter(config JSONAlerterConfig) (*JSONAlerter, error) {
 	var writer io.Writer
 	var file *os.File
@@ -61,11 +97,14 @@ func NewJSONAlerter(config JSONAlerterConfig) (*JSONAlerter, error) {
 		alerter.encoder.SetIndent("", "  ")
 	}
 
+	// Start periodic flush goroutine
 	go alerter.periodicFlush()
 
 	return alerter, nil
 }
 
+// periodicFlush flushes the buffer every second.
+// Runs in background until Close() is called.
 func (a *JSONAlerter) periodicFlush() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -80,6 +119,17 @@ func (a *JSONAlerter) periodicFlush() {
 	}
 }
 
+// Send writes an alert as JSON to the output.
+//
+// Parameters:
+//   - ctx: Context (not used, for interface compliance)
+//   - alert: Alert to serialize and write
+//
+// Returns:
+//   - nil on success
+//   - Error if JSON encoding or write fails
+//
+// Thread Safety: Safe for concurrent calls via mutex.
 func (a *JSONAlerter) Send(ctx context.Context, alert *domain.Alert) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -87,6 +137,13 @@ func (a *JSONAlerter) Send(ctx context.Context, alert *domain.Alert) error {
 	return a.encoder.Encode(alert)
 }
 
+// Flush forces buffered data to disk.
+//
+// Returns:
+//   - nil on success
+//   - Error if flush or sync fails
+//
+// Thread Safety: Safe for concurrent calls.
 func (a *JSONAlerter) Flush() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -103,6 +160,16 @@ func (a *JSONAlerter) Flush() error {
 	return nil
 }
 
+// Close stops periodic flushing and closes the file.
+//
+// Returns:
+//   - nil on success
+//   - Error if flush or close fails
+//
+// Behavior:
+//   - Stops periodic flush goroutine
+//   - Flushes remaining buffer
+//   - Syncs and closes file
 func (a *JSONAlerter) Close() error {
 	close(a.stopFlush)
 
@@ -124,14 +191,27 @@ func (a *JSONAlerter) Close() error {
 	return nil
 }
 
+// MemoryAlerter stores alerts in a fixed-size ring buffer.
+//
+// Used for TUI display to maintain bounded memory while providing
+// access to recent alerts.
+//
+// Thread Safety: Safe for concurrent access via RWMutex.
 type MemoryAlerter struct {
-	alerts    []*domain.Alert
-	head      int
-	count     int
-	maxAlerts int
-	mu        sync.RWMutex
+	alerts    []*domain.Alert // Ring buffer storage
+	head      int             // Next write position
+	count     int             // Current alert count
+	maxAlerts int             // Buffer capacity
+	mu        sync.RWMutex    // Protects all fields
 }
 
+// NewMemoryAlerter creates an in-memory alert buffer.
+//
+// Parameters:
+//   - maxAlerts: Maximum alerts to store (default: 1000 if <= 0)
+//
+// Returns:
+//   - Configured MemoryAlerter ready for Send()
 func NewMemoryAlerter(maxAlerts int) *MemoryAlerter {
 	if maxAlerts <= 0 {
 		maxAlerts = 1000
@@ -142,6 +222,16 @@ func NewMemoryAlerter(maxAlerts int) *MemoryAlerter {
 	}
 }
 
+// Send stores an alert in the ring buffer.
+//
+// Parameters:
+//   - ctx: Context (not used, for interface compliance)
+//   - alert: Alert to store
+//
+// Returns:
+//   - Always nil (memory operations don't fail)
+//
+// Behavior: Overwrites oldest alert when buffer is full.
 func (a *MemoryAlerter) Send(ctx context.Context, alert *domain.Alert) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -155,14 +245,22 @@ func (a *MemoryAlerter) Send(ctx context.Context, alert *domain.Alert) error {
 	return nil
 }
 
+// Flush is a no-op for memory alerter (required by interface).
 func (a *MemoryAlerter) Flush() error {
 	return nil
 }
 
+// Close is a no-op for memory alerter (required by interface).
 func (a *MemoryAlerter) Close() error {
 	return nil
 }
 
+// GetAlerts returns all stored alerts in chronological order.
+//
+// Returns:
+//   - Copy of all alerts (oldest first)
+//
+// Thread Safety: Safe for concurrent access.
 func (a *MemoryAlerter) GetAlerts() []*domain.Alert {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -184,6 +282,15 @@ func (a *MemoryAlerter) GetAlerts() []*domain.Alert {
 	return result
 }
 
+// GetLatestAlerts returns the N most recent alerts.
+//
+// Parameters:
+//   - n: Number of alerts to return (capped at count)
+//
+// Returns:
+//   - Copy of most recent alerts (oldest first within slice)
+//
+// Thread Safety: Safe for concurrent access.
 func (a *MemoryAlerter) GetLatestAlerts(n int) []*domain.Alert {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -204,12 +311,14 @@ func (a *MemoryAlerter) GetLatestAlerts(n int) []*domain.Alert {
 	return result
 }
 
+// Count returns the current number of stored alerts.
 func (a *MemoryAlerter) Count() int {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.count
 }
 
+// Clear removes all stored alerts.
 func (a *MemoryAlerter) Clear() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -220,6 +329,8 @@ func (a *MemoryAlerter) Clear() {
 	}
 }
 
+// OnAlert implements ports.AlertSubscriber interface.
+// Delegates to Send() for TUI integration.
 func (a *MemoryAlerter) OnAlert(alert *domain.Alert) {
 	_ = a.Send(context.Background(), alert)
 }
