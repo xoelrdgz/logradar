@@ -38,14 +38,15 @@ type ToxicMessage struct {
 //
 // Thread Safety: All public methods are safe for concurrent access.
 type WorkerPool struct {
-	workerCount int                     // Number of worker goroutines
-	inputChan   chan *domain.LogEntry   // Buffered input channel
-	outputChan  chan *domain.Alert      // Buffered alert output
-	detectors   []ports.ThreatDetector  // Detectors to apply
-	alerters    []ports.Alerter         // Alert output destinations
-	subscribers []ports.AlertSubscriber // Alert notification callbacks
-	metrics     *domain.AnalysisMetrics // Runtime metrics collector
-	bufferSize  int                     // Channel buffer size
+	workerCount int                        // Number of worker goroutines
+	inputChan   chan *domain.LogEntry      // Buffered input channel
+	outputChan  chan *domain.Alert         // Buffered alert output
+	detectors   []ports.ThreatDetector     // Detectors to apply
+	alerters    []ports.Alerter            // Alert output destinations
+	subscribers []ports.AlertSubscriber    // Alert notification callbacks
+	observers   []ports.ProcessingObserver // Processing result observers
+	metrics     *domain.AnalysisMetrics    // Runtime metrics collector
+	bufferSize  int                        // Channel buffer size
 
 	submitTimeout   time.Duration // Max wait for channel space
 	useBackpressure bool          // Enable timeout-based backpressure
@@ -290,6 +291,15 @@ func (wp *WorkerPool) worker(ctx context.Context, id int) {
 
 			if lineHasThreat && wp.metrics != nil {
 				wp.metrics.IncrementMaliciousLines()
+			}
+
+			// Notify observers of line result
+			result := "clean"
+			if lineHasThreat {
+				result = "malicious"
+			}
+			for _, obs := range wp.observers {
+				obs.IncrementLinesProcessedByResult(result)
 			}
 
 			if wp.metrics != nil {
@@ -564,4 +574,11 @@ func (wp *WorkerPool) AddSubscriber(sub ports.AlertSubscriber) {
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
 	wp.subscribers = append(wp.subscribers, sub)
+}
+
+// AddObserver registers a processing result observer.
+func (wp *WorkerPool) AddObserver(obs ports.ProcessingObserver) {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
+	wp.observers = append(wp.observers, obs)
 }

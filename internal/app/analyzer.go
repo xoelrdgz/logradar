@@ -126,6 +126,13 @@ func (a *Analyzer) AddAlertSubscriber(sub ports.AlertSubscriber) {
 	a.workerPool.AddSubscriber(sub)
 }
 
+// AddProcessingObserver registers a callback for processing results.
+func (a *Analyzer) AddProcessingObserver(obs ports.ProcessingObserver) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.workerPool.AddObserver(obs)
+}
+
 // Start begins asynchronous log analysis.
 //
 // Parameters:

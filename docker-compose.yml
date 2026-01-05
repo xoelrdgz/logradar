@@ -64,7 +64,7 @@ services:
     ports:
       - "9091:9090"
 
-    command: [ "analyze", "--demo", "--demo-rate", "500000", "--workers", "32", "--no-tui" ]
+    command: [ "analyze", "--demo", "--demo-rate", "1000", "--workers", "32", "--no-tui" ]
   logradar-tui:
     build:
       context: .

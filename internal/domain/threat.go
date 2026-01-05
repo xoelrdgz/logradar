@@ -275,6 +275,11 @@ func (m *AnalysisMetrics) TotalLines() int64 {
 	return m.totalLines.Load()
 }
 
+// MaliciousLines returns the current malicious line count (atomic).
+func (m *AnalysisMetrics) MaliciousLines() int64 {
+	return m.maliciousLines.Load()
+}
+
 // SetActiveWorkers updates the active worker count.
 // Called when worker pool starts/stops workers.
 //

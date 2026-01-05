@@ -335,7 +335,9 @@ Metrics available at `http://localhost:9090/metrics`:
 ```text
 # Throughput
 logradar_pipeline_throughput_lines_per_second
-logradar_pipeline_lines_by_result_total{result="clean|malicious"}
+logradar_pipeline_lines_total
+logradar_pipeline_lines_malicious_total
+logradar_pipeline_lines_clean_total
 logradar_pipeline_bytes_processed_total
 
 # Detection

@@ -278,6 +278,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if viper.GetBool("output.metrics.enabled") {
 		promMetrics := output.NewPrometheusMetrics("logradar", analyzer.InternalMetrics())
 		analyzer.AddAlertSubscriber(promMetrics)
+		analyzer.AddProcessingObserver(promMetrics)
 
 		metricsConfig := output.MetricsConfig{
 			Port:       viper.GetString("output.metrics.port"),

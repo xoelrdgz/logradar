@@ -138,7 +138,7 @@
             "pluginVersion": "10.2.2",
             "targets": [
                 {
-                    "expr": "sum(logradar_pipeline_lines_by_result_total)",
+                    "expr": "sum(logradar_pipeline_valid_lines_total)",
                     "refId": "A"
                 }
             ],

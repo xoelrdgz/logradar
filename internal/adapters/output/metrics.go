@@ -88,8 +88,11 @@ type PrometheusMetrics struct {
 	sloAvailabilityErrors prometheus.Counter     // failed processing
 
 	// Throughput metrics
-	linesPerSecond prometheus.GaugeFunc
-	bytesProcessed prometheus.Counter
+	linesPerSecond      prometheus.GaugeFunc
+	bytesProcessed      prometheus.Counter
+	totalLinesGauge     prometheus.GaugeFunc // Accurate total lines from internalMetrics
+	maliciousLinesGauge prometheus.GaugeFunc // Accurate malicious lines from internalMetrics
+	cleanLinesGauge     prometheus.GaugeFunc // Clean lines (total - malicious)
 
 	// Pipeline health
 	uptimeSeconds       prometheus.CounterFunc
@@ -361,6 +364,9 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 	// Throughput Metrics
 	// ============================================================
 
+	// STARTUP LOG
+	log.Info().Msgf("DEBUG: STARTING NEW METRICS INITIALIZATION. Pointer=%p", internalMetrics)
+
 	m.linesPerSecond = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Namespace: namespace,
 		Subsystem: "pipeline",
@@ -368,7 +374,11 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		Help:      "Current processing throughput in lines per second",
 	}, func() float64 {
 		if internalMetrics != nil {
-			return internalMetrics.GetSnapshot().LinesPerSecond
+			val := internalMetrics.GetSnapshot().LinesPerSecond
+			if val > 0 && int(val)%1000 == 0 {
+				log.Info().Float64("val", val).Msg("DEBUG: LPS is working")
+			}
+			return val
 		}
 		return 0
 	})
@@ -378,6 +388,56 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		Subsystem: "pipeline",
 		Name:      "bytes_processed_total",
 		Help:      "Total bytes of log data processed",
+	})
+
+	m.totalLinesGauge = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "pipeline",
+		Name:      "valid_lines_total",
+		Help:      "Total number of log lines processed (accurate count from internal metrics)",
+	}, func() float64 {
+		if internalMetrics != nil {
+			snap := internalMetrics.GetSnapshot()
+			// Use zerolog to ensure it appears in the output stream
+			if snap.TotalLinesProcessed == 0 && snap.LinesPerSecond > 0 {
+				log.Error().
+					Float64("lps", snap.LinesPerSecond).
+					Int64("total_lines", snap.TotalLinesProcessed).
+					Interface("ptr", internalMetrics).
+					Msg("METRICS_DEBUG: Inconsistent state")
+			} else if snap.TotalLinesProcessed > 0 && snap.TotalLinesProcessed%1000 == 0 {
+				log.Info().
+					Int64("total_lines", snap.TotalLinesProcessed).
+					Msg("METRICS_DEBUG: Live count")
+			}
+			return float64(snap.TotalLinesProcessed)
+		}
+		return 0
+	})
+
+	m.maliciousLinesGauge = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "pipeline",
+		Name:      "lines_malicious_total",
+		Help:      "Total number of malicious log lines detected (accurate count from internal metrics)",
+	}, func() float64 {
+		if internalMetrics != nil {
+			return float64(internalMetrics.GetSnapshot().MaliciousLines)
+		}
+		return 0
+	})
+
+	m.cleanLinesGauge = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "pipeline",
+		Name:      "lines_clean_total",
+		Help:      "Total number of clean log lines (total - malicious)",
+	}, func() float64 {
+		if internalMetrics != nil {
+			snap := internalMetrics.GetSnapshot()
+			return float64(snap.TotalLinesProcessed - snap.MaliciousLines)
+		}
+		return 0
 	})
 
 	// ============================================================
@@ -474,6 +534,9 @@ func (m *PrometheusMetrics) registerMetrics() {
 	// Throughput
 	m.registry.MustRegister(m.linesPerSecond)
 	m.registry.MustRegister(m.bytesProcessed)
+	m.registry.MustRegister(m.totalLinesGauge)
+	m.registry.MustRegister(m.maliciousLinesGauge)
+	m.registry.MustRegister(m.cleanLinesGauge)
 
 	// Health
 	m.registry.MustRegister(m.uptimeSeconds)
@@ -576,8 +639,6 @@ func (m *PrometheusMetrics) RecordAlert(alert *domain.Alert) {
 	m.detectionsBySeverity.WithLabelValues(level).Inc()
 	m.riskScoreHistogram.Observe(float64(alert.RiskScore))
 
-	// Mark as malicious line
-	m.linesProcessedByType.WithLabelValues("malicious").Inc()
 }
 
 // RecordHealthCheck records health check duration.

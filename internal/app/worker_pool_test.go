@@ -261,3 +261,82 @@ func TestWorkerPool_QueueLength(t *testing.T) {
 
 	pool.Stop()
 }
+
+type mockObserver struct {
+	cleanCount     atomic.Int64
+	maliciousCount atomic.Int64
+}
+
+func (m *mockObserver) IncrementLinesProcessedByResult(result string) {
+	if result == "clean" {
+		m.cleanCount.Add(1)
+	} else if result == "malicious" {
+		m.maliciousCount.Add(1)
+	}
+}
+
+func TestWorkerPool_ProcessingObserver(t *testing.T) {
+	metrics := domain.NewAnalysisMetrics()
+	detector := &mockDetector{shouldDetect: false}
+	alerter := &mockAlerter{}
+	observer := &mockObserver{}
+
+	// Create a detector that we can toggle for the second phase
+	maliciousDetector := &mockDetector{shouldDetect: true}
+
+	config := WorkerPoolConfig{
+		WorkerCount: 2,
+		BufferSize:  100,
+	}
+
+	// Phase 1: Clean lines
+	pool := NewWorkerPool(config, []ports.ThreatDetector{detector}, []ports.Alerter{alerter}, metrics)
+	pool.AddObserver(observer)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pool.Start(ctx)
+
+	for i := 0; i < 10; i++ {
+		entry := domain.AcquireLogEntry()
+		entry.Path = "/clean"
+		pool.SubmitBlocking(ctx, entry)
+	}
+
+	// Give workers time to process
+	time.Sleep(100 * time.Millisecond)
+
+	pool.Stop()
+
+	if observer.cleanCount.Load() != 10 {
+		t.Errorf("Expected 10 clean lines, got %d", observer.cleanCount.Load())
+	}
+	if observer.maliciousCount.Load() != 0 {
+		t.Errorf("Expected 0 malicious lines, got %d", observer.maliciousCount.Load())
+	}
+
+	// Phase 2: Malicious lines
+	// Need new pool because Stop() closes channels
+	pool2 := NewWorkerPool(config, []ports.ThreatDetector{maliciousDetector}, []ports.Alerter{alerter}, metrics)
+	pool2.AddObserver(observer)
+
+	pool2.Start(ctx)
+
+	for i := 0; i < 5; i++ {
+		entry := domain.AcquireLogEntry()
+		entry.Path = "/malicious"
+		pool2.SubmitBlocking(ctx, entry)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	pool2.Stop()
+
+	if observer.maliciousCount.Load() != 5 {
+		t.Errorf("Expected 5 malicious lines, got %d", observer.maliciousCount.Load())
+	}
+	// Clean count should stay same (10)
+	if observer.cleanCount.Load() != 10 {
+		t.Errorf("Expected 10 clean lines total, got %d", observer.cleanCount.Load())
+	}
+}
