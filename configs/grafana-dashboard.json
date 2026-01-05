@@ -1,23 +1,49 @@
 {
     "annotations": {
-        "list": []
+        "list": [
+            {
+                "builtIn": 1,
+                "datasource": {
+                    "type": "grafana",
+                    "uid": "-- Grafana --"
+                },
+                "enable": true,
+                "hide": true,
+                "iconColor": "rgba(0, 211, 255, 1)",
+                "name": "Annotations & Alerts",
+                "type": "dashboard"
+            }
+        ]
     },
     "editable": true,
     "fiscalYearStartMonth": 0,
-    "graphTooltip": 0,
+    "graphTooltip": 1,
     "id": null,
     "links": [],
     "liveNow": false,
     "panels": [
         {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 0
+            },
+            "id": 100,
+            "panels": [],
+            "title": "Overview",
+            "type": "row"
+        },
+        {
             "datasource": {
                 "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
+                "uid": "${datasource}"
             },
             "fieldConfig": {
                 "defaults": {
                     "color": {
-                        "mode": "palette-classic"
+                        "mode": "thresholds"
                     },
                     "mappings": [],
                     "thresholds": {
@@ -26,25 +52,18 @@
                             {
                                 "color": "green",
                                 "value": null
-                            },
-                            {
-                                "color": "yellow",
-                                "value": 10000
-                            },
-                            {
-                                "color": "red",
-                                "value": 50000
                             }
                         ]
                     },
-                    "unit": "reqps"
-                }
+                    "unit": "short"
+                },
+                "overrides": []
             },
             "gridPos": {
-                "h": 6,
-                "w": 6,
+                "h": 4,
+                "w": 4,
                 "x": 0,
-                "y": 0
+                "y": 1
             },
             "id": 1,
             "options": {
@@ -61,24 +80,25 @@
                 },
                 "textMode": "auto"
             },
-            "title": "Lines/sec",
-            "type": "stat",
+            "pluginVersion": "10.2.2",
             "targets": [
                 {
-                    "expr": "rate(logradar_total_requests[1m])",
+                    "expr": "sum(logradar_pipeline_throughput_lines_per_second)",
                     "refId": "A"
                 }
-            ]
+            ],
+            "title": "Lines/sec",
+            "type": "stat"
         },
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
+                "uid": "${datasource}"
             },
             "fieldConfig": {
                 "defaults": {
                     "color": {
-                        "mode": "palette-classic"
+                        "mode": "thresholds"
                     },
                     "mappings": [],
                     "thresholds": {
@@ -87,25 +107,23 @@
                             {
                                 "color": "green",
                                 "value": null
-                            },
-                            {
-                                "color": "red",
-                                "value": 1
                             }
                         ]
-                    }
-                }
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
             },
             "gridPos": {
-                "h": 6,
-                "w": 6,
-                "x": 6,
-                "y": 0
+                "h": 4,
+                "w": 4,
+                "x": 4,
+                "y": 1
             },
             "id": 2,
             "options": {
                 "colorMode": "value",
-                "graphMode": "none",
+                "graphMode": "area",
                 "justifyMode": "auto",
                 "orientation": "auto",
                 "reduceOptions": {
@@ -117,43 +135,49 @@
                 },
                 "textMode": "auto"
             },
-            "title": "Total Alerts",
-            "type": "stat",
+            "pluginVersion": "10.2.2",
             "targets": [
                 {
-                    "expr": "sum(logradar_threats_detected_total)",
+                    "expr": "sum(logradar_pipeline_lines_by_result_total)",
                     "refId": "A"
                 }
-            ]
+            ],
+            "title": "Total Lines",
+            "type": "stat"
         },
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
+                "uid": "${datasource}"
             },
             "fieldConfig": {
                 "defaults": {
                     "color": {
-                        "mode": "palette-classic"
+                        "mode": "thresholds"
                     },
                     "mappings": [],
                     "thresholds": {
                         "mode": "absolute",
                         "steps": [
                             {
-                                "color": "green",
+                                "color": "orange",
                                 "value": null
+                            },
+                            {
+                                "color": "red",
+                                "value": 100
                             }
                         ]
                     },
-                    "unit": "decbytes"
-                }
+                    "unit": "short"
+                },
+                "overrides": []
             },
             "gridPos": {
-                "h": 6,
-                "w": 6,
-                "x": 12,
-                "y": 0
+                "h": 4,
+                "w": 4,
+                "x": 8,
+                "y": 1
             },
             "id": 3,
             "options": {
@@ -170,24 +194,25 @@
                 },
                 "textMode": "auto"
             },
-            "title": "Memory Usage",
-            "type": "stat",
+            "pluginVersion": "10.2.2",
             "targets": [
                 {
-                    "expr": "logradar_memory_bytes",
+                    "expr": "sum(logradar_detection_threats_total)",
                     "refId": "A"
                 }
-            ]
+            ],
+            "title": "Total Threats",
+            "type": "stat"
         },
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
+                "uid": "${datasource}"
             },
             "fieldConfig": {
                 "defaults": {
                     "color": {
-                        "mode": "palette-classic"
+                        "mode": "thresholds"
                     },
                     "mappings": [],
                     "thresholds": {
@@ -199,22 +224,23 @@
                             },
                             {
                                 "color": "yellow",
-                                "value": 0.001
+                                "value": 0.01
                             },
                             {
                                 "color": "red",
-                                "value": 0.01
+                                "value": 0.05
                             }
                         ]
                     },
-                    "unit": "s"
-                }
+                    "unit": "percentunit"
+                },
+                "overrides": []
             },
             "gridPos": {
-                "h": 6,
-                "w": 6,
-                "x": 18,
-                "y": 0
+                "h": 4,
+                "w": 4,
+                "x": 12,
+                "y": 1
             },
             "id": 4,
             "options": {
@@ -224,56 +250,67 @@
                 "orientation": "auto",
                 "reduceOptions": {
                     "calcs": [
-                        "mean"
+                        "lastNotNull"
                     ],
                     "fields": "",
                     "values": false
                 },
                 "textMode": "auto"
             },
-            "title": "Detection Latency",
-            "type": "stat",
+            "pluginVersion": "10.2.2",
             "targets": [
                 {
-                    "expr": "histogram_quantile(0.99, sum by (le) (rate(logradar_processing_duration_seconds_bucket[1m]))) or vector(0)",
+                    "expr": "sum(rate(logradar_pipeline_errors_total[5m])) / sum(rate(logradar_pipeline_lines_by_result_total[5m])) or vector(0)",
                     "refId": "A"
                 }
-            ]
+            ],
+            "title": "Error Rate",
+            "type": "stat"
         },
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
+                "uid": "${datasource}"
             },
             "fieldConfig": {
                 "defaults": {
                     "color": {
-                        "mode": "palette-classic"
+                        "mode": "thresholds"
                     },
-                    "custom": {
-                        "hideFrom": {
-                            "legend": false,
-                            "tooltip": false,
-                            "viz": false
-                        }
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.01
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.1
+                            }
+                        ]
                     },
-                    "mappings": []
-                }
+                    "unit": "s"
+                },
+                "overrides": []
             },
             "gridPos": {
-                "h": 10,
-                "w": 12,
-                "x": 0,
-                "y": 6
+                "h": 4,
+                "w": 4,
+                "x": 16,
+                "y": 1
             },
             "id": 5,
             "options": {
-                "legend": {
-                    "displayMode": "list",
-                    "placement": "right",
-                    "showLegend": true
-                },
-                "pieType": "pie",
+                "colorMode": "value",
+                "graphMode": "area",
+                "justifyMode": "auto",
+                "orientation": "auto",
                 "reduceOptions": {
                     "calcs": [
                         "lastNotNull"
@@ -281,34 +318,27 @@
                     "fields": "",
                     "values": false
                 },
-                "tooltip": {
-                    "mode": "single",
-                    "sort": "none"
-                }
+                "textMode": "auto"
             },
-            "title": "Alerts by Type",
-            "type": "piechart",
+            "pluginVersion": "10.2.2",
             "targets": [
                 {
-                    "expr": "sum by (type) (logradar_alerts_by_type_total)",
-                    "legendFormat": "{{type}}",
+                    "expr": "histogram_quantile(0.99, sum by (le) (rate(logradar_pipeline_processing_duration_seconds_bucket[5m]))) or vector(0)",
                     "refId": "A"
                 }
-            ]
+            ],
+            "title": "p99 Latency",
+            "type": "stat"
         },
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
+                "uid": "${datasource}"
             },
             "fieldConfig": {
                 "defaults": {
                     "color": {
                         "mode": "thresholds"
-                    },
-                    "custom": {
-                        "align": "auto",
-                        "displayMode": "auto"
                     },
                     "mappings": [],
                     "thresholds": {
@@ -319,57 +349,59 @@
                                 "value": null
                             }
                         ]
-                    }
+                    },
+                    "unit": "s"
                 },
                 "overrides": []
             },
             "gridPos": {
-                "h": 10,
-                "w": 12,
-                "x": 12,
-                "y": 6
+                "h": 4,
+                "w": 4,
+                "x": 20,
+                "y": 1
             },
             "id": 6,
             "options": {
-                "footer": {
-                    "fields": "",
-                    "reducer": [
-                        "sum"
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
                     ],
-                    "show": false
+                    "fields": "",
+                    "values": false
                 },
-                "showHeader": true
+                "textMode": "auto"
             },
-            "title": "Top Attacking IPs",
-            "type": "table",
+            "pluginVersion": "10.2.2",
             "targets": [
                 {
-                    "expr": "topk(10, sum by (type) (logradar_alerts_by_type_total))",
-                    "format": "table",
-                    "instant": true,
+                    "expr": "sum(logradar_uptime_seconds_total)",
                     "refId": "A"
                 }
             ],
-            "transformations": [
-                {
-                    "id": "organize",
-                    "options": {
-                        "excludeByName": {
-                            "Time": true
-                        },
-                        "indexByName": {},
-                        "renameByName": {
-                            "Value": "Alerts",
-                            "source_ip": "Source IP"
-                        }
-                    }
-                }
-            ]
+            "title": "Uptime",
+            "type": "stat"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 5
+            },
+            "id": 101,
+            "panels": [],
+            "title": "Throughput & Performance",
+            "type": "row"
         },
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
+                "uid": "${datasource}"
             },
             "fieldConfig": {
                 "defaults": {
@@ -377,19 +409,21 @@
                         "mode": "palette-classic"
                     },
                     "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
                         "axisLabel": "",
                         "axisPlacement": "auto",
                         "barAlignment": 0,
                         "drawStyle": "line",
-                        "fillOpacity": 10,
-                        "gradientMode": "none",
+                        "fillOpacity": 20,
+                        "gradientMode": "opacity",
                         "hideFrom": {
                             "legend": false,
                             "tooltip": false,
                             "viz": false
                         },
                         "lineInterpolation": "smooth",
-                        "lineWidth": 1,
+                        "lineWidth": 2,
                         "pointSize": 5,
                         "scaleDistribution": {
                             "type": "linear"
@@ -414,37 +448,871 @@
                             }
                         ]
                     },
-                    "unit": "reqps"
-                }
+                    "unit": "short"
+                },
+                "overrides": []
             },
             "gridPos": {
                 "h": 8,
-                "w": 24,
+                "w": 12,
                 "x": 0,
-                "y": 16
+                "y": 6
             },
-            "id": 7,
+            "id": 10,
             "options": {
                 "legend": {
-                    "calcs": [],
-                    "displayMode": "list",
+                    "calcs": [
+                        "mean",
+                        "max"
+                    ],
+                    "displayMode": "table",
                     "placement": "bottom",
                     "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(logradar_pipeline_throughput_lines_per_second)",
+                    "legendFormat": "Lines/sec",
+                    "refId": "A"
+                },
+                {
+                    "expr": "sum(rate(logradar_pipeline_lines_by_result_total[1m]))",
+                    "legendFormat": "Rate (1m avg)",
+                    "refId": "B"
+                }
+            ],
+            "title": "Processing Throughput",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "gradientMode": "opacity",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "s"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 6
+            },
+            "id": 11,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "mean",
+                        "max"
+                    ],
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.50, sum by (le) (rate(logradar_pipeline_processing_duration_seconds_bucket[5m]))) or vector(0)",
+                    "legendFormat": "p50",
+                    "refId": "A"
+                },
+                {
+                    "expr": "histogram_quantile(0.90, sum by (le) (rate(logradar_pipeline_processing_duration_seconds_bucket[5m]))) or vector(0)",
+                    "legendFormat": "p90",
+                    "refId": "B"
+                },
+                {
+                    "expr": "histogram_quantile(0.99, sum by (le) (rate(logradar_pipeline_processing_duration_seconds_bucket[5m]))) or vector(0)",
+                    "legendFormat": "p99",
+                    "refId": "C"
+                }
+            ],
+            "title": "Processing Latency",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 14
+            },
+            "id": 102,
+            "panels": [],
+            "title": "Detection & Security",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "gradientMode": "opacity",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "normal"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 15
+            },
+            "id": 20,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "sum"
+                    ],
+                    "displayMode": "table",
+                    "placement": "right",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum by (type) (rate(logradar_detection_threats_total[5m]))",
+                    "legendFormat": "{{type}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Threats by Type",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 6,
+                "x": 12,
+                "y": 15
+            },
+            "id": 21,
+            "options": {
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "right",
+                    "showLegend": true,
+                    "values": [
+                        "value"
+                    ]
+                },
+                "pieType": "donut",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
                 },
                 "tooltip": {
                     "mode": "single",
                     "sort": "none"
                 }
             },
-            "title": "Throughput Over Time",
-            "type": "timeseries",
             "targets": [
                 {
-                    "expr": "rate(logradar_total_requests[1m])",
-                    "legendFormat": "Lines/sec",
+                    "expr": "sum by (level) (logradar_detection_alerts_total)",
+                    "legendFormat": "{{level}}",
                     "refId": "A"
                 }
-            ]
+            ],
+            "title": "Alerts by Severity",
+            "type": "piechart"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 6,
+                "x": 18,
+                "y": 15
+            },
+            "id": 22,
+            "options": {
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "right",
+                    "showLegend": true,
+                    "values": [
+                        "value"
+                    ]
+                },
+                "pieType": "donut",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "tooltip": {
+                    "mode": "single",
+                    "sort": "none"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum by (result) (logradar_pipeline_lines_by_result_total)",
+                    "legendFormat": "{{result}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Lines by Result",
+            "type": "piechart"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 23
+            },
+            "id": 103,
+            "panels": [],
+            "title": "Resources & Runtime",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "gradientMode": "opacity",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "bytes"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 24
+            },
+            "id": 30,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "mean",
+                        "max"
+                    ],
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(logradar_runtime_memory_alloc_bytes)",
+                    "legendFormat": "Heap Alloc",
+                    "refId": "A"
+                },
+                {
+                    "expr": "sum(logradar_runtime_memory_sys_bytes)",
+                    "legendFormat": "System Total",
+                    "refId": "B"
+                }
+            ],
+            "title": "Memory Usage",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "gradientMode": "opacity",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 24
+            },
+            "id": 31,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "mean",
+                        "max"
+                    ],
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(logradar_runtime_goroutines_count)",
+                    "legendFormat": "Goroutines",
+                    "refId": "A"
+                },
+                {
+                    "expr": "sum(logradar_pipeline_workers_active)",
+                    "legendFormat": "Active Workers",
+                    "refId": "B"
+                }
+            ],
+            "title": "Goroutines & Workers",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "gradientMode": "opacity",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "s"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 24
+            },
+            "id": 32,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "mean",
+                        "max"
+                    ],
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(logradar_runtime_gc_last_pause_seconds)",
+                    "legendFormat": "Last GC Pause",
+                    "refId": "A"
+                }
+            ],
+            "title": "GC Pause Time",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 32
+            },
+            "id": 104,
+            "panels": [],
+            "title": "Errors & SLOs",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "gradientMode": "opacity",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 33
+            },
+            "id": 40,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "sum"
+                    ],
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum by (error_type) (rate(logradar_pipeline_errors_total[5m]))",
+                    "legendFormat": "{{error_type}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Errors by Type",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "max": 1,
+                    "min": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.95
+                            },
+                            {
+                                "color": "green",
+                                "value": 0.999
+                            }
+                        ]
+                    },
+                    "unit": "percentunit"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 6,
+                "x": 12,
+                "y": 33
+            },
+            "id": 41,
+            "options": {
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "showThresholdLabels": false,
+                "showThresholdMarkers": true
+            },
+            "pluginVersion": "10.2.2",
+            "targets": [
+                {
+                    "expr": "clamp_min(sum(logradar_pipeline_lines_by_result_total{result=\"clean\"}) / clamp_min(sum(logradar_pipeline_lines_by_result_total), 1), 0) or vector(1)",
+                    "refId": "A"
+                }
+            ],
+            "title": "Availability SLO",
+            "type": "gauge"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "max": 1,
+                    "min": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.9
+                            },
+                            {
+                                "color": "green",
+                                "value": 0.95
+                            }
+                        ]
+                    },
+                    "unit": "percentunit"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 6,
+                "x": 18,
+                "y": 33
+            },
+            "id": 42,
+            "options": {
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "showThresholdLabels": false,
+                "showThresholdMarkers": true
+            },
+            "pluginVersion": "10.2.2",
+            "targets": [
+                {
+                    "expr": "(sum(logradar_slo_latency_bucket_total{bucket=~\"fast|normal\"}) / sum(logradar_slo_latency_bucket_total)) or vector(1)",
+                    "refId": "A"
+                }
+            ],
+            "title": "Latency SLO",
+            "type": "gauge"
         }
     ],
     "refresh": "5s",
@@ -452,7 +1320,8 @@
     "style": "dark",
     "tags": [
         "logradar",
-        "security"
+        "security",
+        "monitoring"
     ],
     "templating": {
         "list": [
@@ -460,15 +1329,16 @@
                 "current": {
                     "selected": false,
                     "text": "Prometheus",
-                    "value": "Prometheus"
+                    "value": "prometheus"
                 },
                 "hide": 0,
                 "includeAll": false,
-                "label": "Prometheus",
+                "label": "Datasource",
                 "multi": false,
-                "name": "DS_PROMETHEUS",
+                "name": "datasource",
                 "options": [],
                 "query": "prometheus",
+                "queryValue": "",
                 "refresh": 1,
                 "regex": "",
                 "skipUrlSync": false,
@@ -477,12 +1347,13 @@
         ]
     },
     "time": {
-        "from": "now-30m",
+        "from": "now-15m",
         "to": "now"
     },
     "timepicker": {},
-    "timezone": "",
-    "title": "LogRadar - Threat Detection",
+    "timezone": "browser",
+    "title": "LogRadar - Security Monitoring",
     "uid": "logradar-main",
-    "version": 1
+    "version": 1,
+    "weekStart": ""
 }

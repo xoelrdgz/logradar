@@ -280,8 +280,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		analyzer.AddAlertSubscriber(promMetrics)
 
 		metricsConfig := output.MetricsConfig{
-			Port: viper.GetString("output.metrics.port"),
-			Path: "/metrics",
+			Port:       viper.GetString("output.metrics.port"),
+			Path:       "/metrics",
+			HealthPath: "/ready",
 		}
 		if err := promMetrics.StartServer(metricsConfig); err != nil {
 			log.Warn().Err(err).Msg("Failed to start metrics server")

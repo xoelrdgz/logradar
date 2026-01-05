@@ -1,0 +1,154 @@
+# LogRadar Alerting Rules
+# Production-grade alerts following SRE best practices
+
+groups:
+  # Critical Alerts - Page immediately
+  - name: logradar_critical
+    rules:
+      # Service down
+      - alert: LogRadarDown
+        expr: up{job="logradar"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: "LogRadar instance is down"
+          description: "LogRadar instance {{ $labels.instance }} has been down for more than 1 minute."
+          runbook_url: "https://wiki.example.com/runbooks/logradar-down"
+
+      # High error rate
+      - alert: LogRadarHighErrorRate
+        expr: logradar:red:error_ratio_1m > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: "LogRadar error rate is critically high"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      # Pipeline completely stalled
+      - alert: LogRadarPipelineStalled
+        expr: logradar:red:rate_1m == 0 and logradar_uptime_seconds_total > 300
+        for: 2m
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: "LogRadar pipeline has stopped processing"
+          description: "No logs have been processed in the last 2 minutes"
+
+  # Warning Alerts - Investigate soon
+  - name: logradar_warning
+    rules:
+      # Elevated latency
+      - alert: LogRadarHighLatency
+        expr: logradar:red:latency_p99 > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "LogRadar p99 latency is elevated"
+          description: "P99 latency is {{ $value | humanizeDuration }} (threshold: 100ms)"
+
+      # Memory pressure
+      - alert: LogRadarHighMemory
+        expr: logradar_runtime_memory_alloc_bytes / logradar_runtime_memory_sys_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "LogRadar memory utilization is high"
+          description: "Memory utilization is {{ $value | humanizePercentage }}"
+
+      # Queue saturation
+      - alert: LogRadarQueueSaturation
+        expr: logradar_pipeline_queue_utilization_ratio > 0.8
+        for: 3m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "LogRadar processing queue is near capacity"
+          description: "Queue utilization is {{ $value | humanizePercentage }}"
+
+      # High GC overhead
+      - alert: LogRadarHighGCOverhead
+        expr: logradar:resource:gc_overhead > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "LogRadar GC overhead is high"
+          description: "GC overhead is {{ $value | humanizePercentage }}"
+
+      # Goroutine leak
+      - alert: LogRadarGoroutineLeak
+        expr: delta(logradar_runtime_goroutines_count[10m]) > 100
+        for: 10m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Possible goroutine leak detected"
+          description: "Goroutine count increased by {{ $value }} in 10 minutes"
+
+  # SLO Alerts
+  - name: logradar_slo
+    rules:
+      # Availability SLO breach
+      - alert: LogRadarSLOAvailabilityBreach
+        expr: logradar:sli:availability_ratio < 0.999
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "LogRadar availability SLO is at risk"
+          description: "Current availability: {{ $value | humanizePercentage }} (SLO: 99.9%)"
+
+      # Latency SLO breach
+      - alert: LogRadarSLOLatencyBreach
+        expr: logradar:sli:latency_ratio < 0.95
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "LogRadar latency SLO is at risk"
+          description: "Only {{ $value | humanizePercentage }} of requests are within latency SLO"
+
+  # Security Alerts
+  - name: logradar_security
+    rules:
+      # Sudden spike in detections
+      - alert: LogRadarDetectionSpike
+        expr: |
+          (
+            sum(rate(logradar_detection_threats_total[5m]))
+            /
+            sum(rate(logradar_detection_threats_total[1h] offset 5m))
+          ) > 3
+        for: 5m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Unusual spike in threat detections"
+          description: "Detection rate is 3x higher than the hourly baseline"
+
+      # High risk score detections
+      - alert: LogRadarHighRiskDetections
+        expr: |
+          sum(rate(logradar_detection_by_severity_total{severity="critical"}[5m])) > 0.1
+        for: 1m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Critical severity threats detected"
+          description: "{{ $value }} critical threats per second detected"

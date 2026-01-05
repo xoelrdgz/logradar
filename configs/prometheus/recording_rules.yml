@@ -1,0 +1,130 @@
+# LogRadar Recording Rules
+# Pre-compute expensive queries for dashboard performance
+
+groups:
+  # SLI Recording Rules
+  - name: logradar_sli_rules
+    interval: 15s
+    rules:
+      # Availability SLI: successful requests / total requests
+      - record: logradar:sli:availability_ratio
+        expr: |
+          (
+            sum(rate(logradar_slo_requests_successful_total[5m])) 
+            / 
+            (sum(rate(logradar_slo_requests_successful_total[5m])) + sum(rate(logradar_slo_requests_failed_total[5m])))
+          ) or vector(1)
+
+      # Latency SLI: requests under 10ms / total requests
+      - record: logradar:sli:latency_ratio
+        expr: |
+          (
+            sum(rate(logradar_slo_latency_bucket_total{bucket=~"fast|normal"}[5m]))
+            /
+            sum(rate(logradar_slo_latency_bucket_total[5m]))
+          ) or vector(1)
+
+      # Error rate
+      - record: logradar:sli:error_rate
+        expr: |
+          sum(rate(logradar_pipeline_errors_total[5m])) or vector(0)
+
+  # RED Method Recording Rules
+  - name: logradar_red_rules
+    interval: 15s
+    rules:
+      # Rate: requests per second (1m, 5m, 15m windows)
+      - record: logradar:red:rate_1m
+        expr: sum(rate(logradar_pipeline_lines_processed_total[1m])) or vector(0)
+
+      - record: logradar:red:rate_5m
+        expr: sum(rate(logradar_pipeline_lines_processed_total[5m])) or vector(0)
+
+      - record: logradar:red:rate_15m
+        expr: sum(rate(logradar_pipeline_lines_processed_total[15m])) or vector(0)
+
+      # Errors: error rate per second
+      - record: logradar:red:errors_1m
+        expr: sum(rate(logradar_pipeline_errors_total[1m])) or vector(0)
+
+      - record: logradar:red:error_ratio_1m
+        expr: |
+          (
+            sum(rate(logradar_pipeline_errors_total[1m]))
+            /
+            sum(rate(logradar_pipeline_lines_processed_total[1m]))
+          ) or vector(0)
+
+      # Duration: latency percentiles
+      - record: logradar:red:latency_p50
+        expr: |
+          histogram_quantile(0.50, sum by (le) (rate(logradar_pipeline_processing_duration_seconds_bucket[5m]))) or vector(0)
+
+      - record: logradar:red:latency_p90
+        expr: |
+          histogram_quantile(0.90, sum by (le) (rate(logradar_pipeline_processing_duration_seconds_bucket[5m]))) or vector(0)
+
+      - record: logradar:red:latency_p99
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(logradar_pipeline_processing_duration_seconds_bucket[5m]))) or vector(0)
+
+  # Throughput Recording Rules
+  - name: logradar_throughput_rules
+    interval: 15s
+    rules:
+      # Lines per second (real-time gauge)
+      - record: logradar:throughput:lps
+        expr: logradar_pipeline_throughput_lines_per_second or vector(0)
+
+      # Bytes per second
+      - record: logradar:throughput:bps
+        expr: rate(logradar_pipeline_bytes_processed_total[1m]) or vector(0)
+
+      # Detection rate
+      - record: logradar:throughput:detections_per_second
+        expr: sum(rate(logradar_detection_threats_total[1m])) or vector(0)
+
+      # Alert rate by severity
+      - record: logradar:throughput:alerts_by_severity
+        expr: sum by (level) (rate(logradar_detection_alerts_total[5m]))
+
+  # Resource Utilization Rules
+  - name: logradar_resource_rules
+    interval: 15s
+    rules:
+      # Memory utilization (alloc / sys)
+      - record: logradar:resource:memory_utilization
+        expr: |
+          logradar_runtime_memory_alloc_bytes / logradar_runtime_memory_sys_bytes
+
+      # Worker efficiency
+      - record: logradar:resource:worker_efficiency
+        expr: |
+          logradar_pipeline_throughput_lines_per_second / logradar_pipeline_workers_active
+
+      # GC overhead (time in GC / total time)
+      - record: logradar:resource:gc_overhead
+        expr: |
+          rate(go_gc_duration_seconds_sum[5m]) / 0.05
+
+  # Detection Analytics Rules
+  - name: logradar_detection_rules
+    interval: 30s
+    rules:
+      # Top threat types
+      - record: logradar:detection:threat_rate_by_type
+        expr: sum by (type) (rate(logradar_detection_threats_total[5m]))
+
+      # Detection percentage
+      - record: logradar:detection:malicious_ratio
+        expr: |
+          (
+            sum(rate(logradar_pipeline_lines_by_result_total{result="malicious"}[5m]))
+            /
+            sum(rate(logradar_pipeline_lines_processed_total[5m]))
+          ) or vector(0)
+
+      # Risk score average
+      - record: logradar:detection:avg_risk_score
+        expr: |
+          histogram_quantile(0.5, sum by (le) (rate(logradar_detection_risk_score_distribution_bucket[5m])))

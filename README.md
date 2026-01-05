@@ -333,19 +333,57 @@ services:
 Metrics available at `http://localhost:9090/metrics`:
 
 ```text
-logradar_lines_total
-logradar_lines_per_second
-logradar_alerts_total
-logradar_alerts_by_type{type="SQL_INJECTION"}
-logradar_alerts_by_level{level="CRITICAL"}
-logradar_detection_latency_seconds
-logradar_queue_utilization
-logradar_memory_bytes
+# Throughput
+logradar_pipeline_throughput_lines_per_second
+logradar_pipeline_lines_by_result_total{result="clean|malicious"}
+logradar_pipeline_bytes_processed_total
+
+# Detection
+logradar_detection_threats_total{type="SQL_INJECTION|XSS|..."}
+logradar_detection_alerts_total{level="CRITICAL|WARNING|INFO"}
+logradar_detection_by_type_total{threat_type="..."}
+logradar_detection_by_severity_total{severity="..."}
+
+# Resources
+logradar_runtime_memory_alloc_bytes
+logradar_runtime_memory_sys_bytes
+logradar_runtime_goroutines_count
+logradar_pipeline_workers_active
+
+# Errors
+logradar_pipeline_errors_total{error_type="..."}
+logradar_parser_errors_total
+
+# Health
+logradar_uptime_seconds_total
+logradar_build_info{version, commit, build_time, go_version}
 ```
 
 ### Grafana Dashboard
 
-Import the provided dashboard: `./configs/grafana-dashboard.json`
+Full monitoring stack with Docker Compose:
+
+```bash
+# Start LogRadar with Prometheus and Grafana
+docker compose --profile monitoring --profile demo up -d
+
+# Access Grafana
+open http://localhost:3000  # admin/admin
+
+# Stop all
+docker compose --profile monitoring --profile demo down
+
+# Reset all data (Prometheus + Grafana)
+docker compose --profile monitoring --profile demo down -v
+```
+
+The dashboard is auto-provisioned from `./configs/grafana-dashboard.json` and includes:
+
+- Overview stats (lines/sec, total lines, threats, error rate, uptime)
+- Processing throughput and latency graphs
+- Detection panels (threats by type, alerts by severity)
+- Resource monitoring (memory, goroutines, GC)
+- SLO gauges (availability, latency)
 
 ---
 
