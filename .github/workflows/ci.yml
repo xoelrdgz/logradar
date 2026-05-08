@@ -42,8 +42,13 @@ jobs:
 
       - name: Short fuzz smoke tests
         run: |
-          go test -run=^$ -fuzz=Fuzz -fuzztime=10s ./internal/adapters/input
-          go test -run=^$ -fuzz=Fuzz -fuzztime=10s ./internal/adapters/detection
+          go test -run=^$ -fuzz=^FuzzJSONParser$ -fuzztime=10s ./internal/adapters/input
+          go test -run=^$ -fuzz=^FuzzCombinedLogParser$ -fuzztime=10s ./internal/adapters/input
+          go test -run=^$ -fuzz=^FuzzAutoDetectParser$ -fuzztime=10s ./internal/adapters/input
+          go test -run=^$ -fuzz=^FuzzTokenizer$ -fuzztime=10s ./internal/adapters/detection
+          go test -run=^$ -fuzz=^FuzzSignatureDetector$ -fuzztime=10s ./internal/adapters/detection
+          go test -run=^$ -fuzz=^FuzzBehavioralDetector$ -fuzztime=10s ./internal/adapters/detection
+          go test -run=^$ -fuzz=^FuzzLogEntryFields$ -fuzztime=10s ./internal/adapters/detection
 
       - name: Vulnerability check
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
