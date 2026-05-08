@@ -1,11 +1,7 @@
-# Dependabot Configuration
-# Automatically creates pull requests for dependency updates
-# https://docs.github.com/en/code-security/dependabot
 
 version: 2
 
 updates:
-  # Go modules
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
@@ -20,7 +16,6 @@ updates:
     labels:
       - "dependencies"
       - "go"
-    # Group minor/patch updates together
     groups:
       go-dependencies:
         patterns:
@@ -28,12 +23,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-    # Ignore specific packages if needed
-    # ignore:
-    #   - dependency-name: "github.com/example/package"
-    #     versions: [">=2.0.0"]
 
-  # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -45,7 +35,6 @@ updates:
       - "ci"
       - "dependencies"
 
-  # Docker (if using Docker base images)
   - package-ecosystem: "docker"
     directory: "/"
     schedule:

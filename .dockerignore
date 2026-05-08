@@ -2,6 +2,8 @@
 .gitignore
 .vscode
 .idea
+.codex
+.agents
 *.swp
 *.swo
 bin/
@@ -9,8 +11,11 @@ bin/
 coverage.out
 coverage.html
 alerts.json
+output/
 *.log
 testdata/benchmark.log
+tmp/
+.cache/
 *.md
 !README.md
 Dockerfile*
@@ -19,3 +24,4 @@ docker-compose*.yml
 .env
 .env.*
 error.txt
+sbom.json

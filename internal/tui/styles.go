@@ -3,27 +3,27 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	ColorBg         = lipgloss.Color("#0a0a0a")
-	ColorBgAlt      = lipgloss.Color("#0f0f0f")
-	ColorBorder     = lipgloss.Color("#1a3a1a")
-	ColorBorderHi   = lipgloss.Color("#00ff41")
-	ColorPrimary    = lipgloss.Color("#00ff41")
-	ColorPrimaryDim = lipgloss.Color("#00aa2a")
-	ColorPrimaryBg  = lipgloss.Color("#0a1f0a")
-	ColorAmber      = lipgloss.Color("#ffb000")
-	ColorAmberDim   = lipgloss.Color("#997000")
-	ColorRed        = lipgloss.Color("#ff3333")
-	ColorRedDim     = lipgloss.Color("#992020")
-	ColorCyan       = lipgloss.Color("#00b8ff")
+	ColorBg         = lipgloss.Color("#0b0e0d")
+	ColorBgAlt      = lipgloss.Color("#111614")
+	ColorBorder     = lipgloss.Color("#26322d")
+	ColorBorderHi   = lipgloss.Color("#8df7b2")
+	ColorPrimary    = lipgloss.Color("#8df7b2")
+	ColorPrimaryDim = lipgloss.Color("#4da873")
+	ColorPrimaryBg  = lipgloss.Color("#14251d")
+	ColorAmber      = lipgloss.Color("#f2c36b")
+	ColorAmberDim   = lipgloss.Color("#8d6e38")
+	ColorRed        = lipgloss.Color("#ff6b5f")
+	ColorRedDim     = lipgloss.Color("#9f4039")
+	ColorCyan       = lipgloss.Color("#76c7e8")
 	ColorCritical   = ColorRed
 	ColorWarning    = ColorAmber
 	ColorInfo       = ColorCyan
-	ColorText       = lipgloss.Color("#e5e5e5")
-	ColorMuted      = lipgloss.Color("#707070")
-	ColorDim        = lipgloss.Color("#404040")
-	ColorGhost      = lipgloss.Color("#252525")
-	ColorSelect     = lipgloss.Color("#003300")
-	ColorSelectFg   = lipgloss.Color("#00ff41")
+	ColorText       = lipgloss.Color("#dbe6df")
+	ColorMuted      = lipgloss.Color("#82908a")
+	ColorDim        = lipgloss.Color("#46524d")
+	ColorGhost      = lipgloss.Color("#202724")
+	ColorSelect     = lipgloss.Color("#1e382b")
+	ColorSelectFg   = lipgloss.Color("#d5ffe3")
 )
 
 var (

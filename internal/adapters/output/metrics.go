@@ -1,25 +1,11 @@
-// Package output provides production-grade Prometheus metrics for LogRadar.
-//
-// Implements industry-standard observability patterns:
-//   - RED method: Rate, Errors, Duration for request-driven services
-//   - USE method: Utilization, Saturation, Errors for resources
-//   - SLI/SLO metrics: Error budget and latency objectives
-//   - Go runtime metrics: GC, goroutines, memory via prometheus/collectors
-//   - Build info: Version, commit, build time for deployment tracking
-//
-// Metrics naming follows Prometheus conventions:
-//   - namespace_subsystem_name_unit (e.g., logradar_pipeline_processed_total)
-//   - _total suffix for counters
-//   - _seconds suffix for durations
-//   - _bytes suffix for sizes
-//
-// Thread Safety: All methods are safe for concurrent access.
 package output
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,50 +17,40 @@ import (
 	"github.com/xoelrdgz/logradar/internal/domain"
 )
 
-// Build information - set via ldflags at compile time
 var (
 	Version   = "dev"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 )
 
-// PrometheusMetrics implements production-grade metrics collection for LogRadar.
-// Follows SRE best practices for monitoring log analysis pipelines.
 type PrometheusMetrics struct {
 	registry *prometheus.Registry
 
-	// Build info
 	buildInfo *prometheus.GaugeVec
 
-	// RED metrics - Rate
 	linesProcessedTotal  prometheus.Counter
 	linesProcessedByType *prometheus.CounterVec
 	alertsGeneratedTotal *prometheus.CounterVec
 	threatsDetectedTotal *prometheus.CounterVec
 
-	// RED metrics - Errors
 	processingErrorsTotal *prometheus.CounterVec
 	parseErrorsTotal      prometheus.Counter
+	parseErrorsByReason   *prometheus.CounterVec
 	queueOverflowTotal    prometheus.Counter
+	alerterErrorsTotal    *prometheus.CounterVec
 
-	// RED metrics - Duration
 	processingDuration        *prometheus.HistogramVec
 	processingDurationSummary *prometheus.SummaryVec
 
-	// USE metrics - Utilization
 	queueUtilization  prometheus.GaugeFunc
 	workerUtilization prometheus.GaugeFunc
 
-	// USE metrics - Saturation
 	queueSize         prometheus.GaugeFunc
 	queueCapacity     prometheus.GaugeFunc
 	activeWorkers     prometheus.GaugeFunc
 	configuredWorkers prometheus.GaugeFunc
 	pendingLines      prometheus.GaugeFunc
 
-	// USE metrics - Errors (covered by processingErrorsTotal)
-
-	// Resource metrics
 	memoryAllocBytes    prometheus.GaugeFunc
 	memorySysBytes      prometheus.GaugeFunc
 	memoryHeapObjects   prometheus.GaugeFunc
@@ -82,56 +58,54 @@ type PrometheusMetrics struct {
 	gcPauseTotalSeconds prometheus.CounterFunc
 	gcLastPauseSeconds  prometheus.GaugeFunc
 
-	// SLI/SLO metrics
-	sloLatencyBucket      *prometheus.CounterVec // requests within SLO latency
-	sloAvailabilityTotal  prometheus.Counter     // successful processing
-	sloAvailabilityErrors prometheus.Counter     // failed processing
+	sloLatencyBucket      *prometheus.CounterVec
+	sloAvailabilityTotal  prometheus.Counter
+	sloAvailabilityErrors prometheus.Counter
 
-	// Throughput metrics
 	linesPerSecond      prometheus.GaugeFunc
 	bytesProcessed      prometheus.Counter
-	totalLinesGauge     prometheus.GaugeFunc // Accurate total lines from internalMetrics
-	maliciousLinesGauge prometheus.GaugeFunc // Accurate malicious lines from internalMetrics
-	cleanLinesGauge     prometheus.GaugeFunc // Clean lines (total - malicious)
+	totalLinesGauge     prometheus.GaugeFunc
+	maliciousLinesGauge prometheus.GaugeFunc
+	cleanLinesGauge     prometheus.GaugeFunc
 
-	// Pipeline health
 	uptimeSeconds       prometheus.CounterFunc
 	lastSuccessfulParse prometheus.Gauge
 	healthCheckDuration prometheus.Histogram
 
-	// Detection metrics
-	detectionsByType     *prometheus.CounterVec
-	detectionsBySeverity *prometheus.CounterVec
-	riskScoreHistogram   prometheus.Histogram
+	detectionsByType      *prometheus.CounterVec
+	detectionsBySeverity  *prometheus.CounterVec
+	riskScoreHistogram    prometheus.Histogram
+	threatIntelEntries    prometheus.Gauge
+	threatIntelLastReload prometheus.Gauge
+	threatIntelFeedErrors prometheus.Gauge
 
-	// Internal metrics reference
 	internalMetrics *domain.AnalysisMetrics
 	startTime       time.Time
 
-	server *http.Server
-	mu     sync.Mutex
+	server         *http.Server
+	mu             sync.Mutex
+	readinessCheck func() (bool, string)
+	queueStats     func() (int, int)
 }
 
-// MetricsConfig holds configuration for the Prometheus metrics server.
 type MetricsConfig struct {
 	Port            string
 	Path            string
 	HealthPath      string
+	LivePath        string
 	EnableGoMetrics bool
 }
 
-// DefaultMetricsConfig returns production-ready default configuration.
 func DefaultMetricsConfig() MetricsConfig {
 	return MetricsConfig{
 		Port:            ":9090",
 		Path:            "/metrics",
 		HealthPath:      "/ready",
+		LivePath:        "/live",
 		EnableGoMetrics: true,
 	}
 }
 
-// NewPrometheusMetrics creates a production-grade metrics collector.
-// Registers all metrics with a dedicated registry (not the global default).
 func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetrics) *PrometheusMetrics {
 	if namespace == "" {
 		namespace = "logradar"
@@ -143,17 +117,12 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		startTime:       time.Now(),
 	}
 
-	// Build info metric
 	m.buildInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: namespace,
 		Name:      "build_info",
 		Help:      "Build information including version, commit and build time",
 	}, []string{"version", "commit", "build_time", "go_version"})
 	m.buildInfo.WithLabelValues(Version, Commit, BuildTime, runtime.Version()).Set(1)
-
-	// ============================================================
-	// RED Metrics - Rate
-	// ============================================================
 
 	m.linesProcessedTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: namespace,
@@ -183,10 +152,6 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		Help:      "Total threats detected by type",
 	}, []string{"type"})
 
-	// ============================================================
-	// RED Metrics - Errors
-	// ============================================================
-
 	m.processingErrorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
 		Subsystem: "pipeline",
@@ -201,6 +166,13 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		Help:      "Total log line parsing errors",
 	})
 
+	m.parseErrorsByReason = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "parser",
+		Name:      "errors_by_reason_total",
+		Help:      "Total log line parsing errors by reason",
+	}, []string{"reason"})
+
 	m.queueOverflowTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: namespace,
 		Subsystem: "pipeline",
@@ -208,41 +180,38 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		Help:      "Total items dropped due to queue overflow",
 	})
 
-	// ============================================================
-	// RED Metrics - Duration
-	// ============================================================
+	m.alerterErrorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "alerter",
+		Name:      "errors_total",
+		Help:      "Total alerter send errors by output",
+	}, []string{"output"})
 
-	// Histogram with SRE-optimized buckets for microsecond processing
 	m.processingDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: namespace,
 		Subsystem: "pipeline",
 		Name:      "processing_duration_seconds",
 		Help:      "Time spent processing each log line",
 		Buckets: []float64{
-			0.00001, 0.00005, 0.0001, 0.0005, 0.001, // 10us, 50us, 100us, 500us, 1ms
-			0.005, 0.01, 0.025, 0.05, 0.1, // 5ms, 10ms, 25ms, 50ms, 100ms
-			0.25, 0.5, 1.0, // 250ms, 500ms, 1s
+			0.00001, 0.00005, 0.0001, 0.0005, 0.001,
+			0.005, 0.01, 0.025, 0.05, 0.1,
+			0.25, 0.5, 1.0,
 		},
 	}, []string{"stage"})
 
-	// Summary for accurate percentiles
 	m.processingDurationSummary = prometheus.NewSummaryVec(prometheus.SummaryOpts{
 		Namespace: namespace,
 		Subsystem: "pipeline",
 		Name:      "processing_duration_quantiles",
 		Help:      "Processing duration quantiles (p50, p90, p99)",
 		Objectives: map[float64]float64{
-			0.5:  0.05,  // p50 with 5% error
-			0.9:  0.01,  // p90 with 1% error
-			0.99: 0.001, // p99 with 0.1% error
+			0.5:  0.05,
+			0.9:  0.01,
+			0.99: 0.001,
 		},
 		MaxAge:     1 * time.Minute,
 		AgeBuckets: 3,
 	}, []string{"stage"})
-
-	// ============================================================
-	// USE Metrics - Utilization & Saturation
-	// ============================================================
 
 	m.queueUtilization = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Namespace: namespace,
@@ -250,7 +219,10 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		Name:      "queue_utilization_ratio",
 		Help:      "Current queue utilization (0.0-1.0)",
 	}, func() float64 {
-		// Queue utilization is tracked externally via worker pool
+		size, capacity := m.currentQueueStats()
+		if capacity > 0 {
+			return float64(size) / float64(capacity)
+		}
 		return 0
 	})
 
@@ -260,7 +232,18 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		Name:      "queue_size_current",
 		Help:      "Current number of items in the processing queue",
 	}, func() float64 {
-		return 0 // Updated via SetQueueSize
+		size, _ := m.currentQueueStats()
+		return float64(size)
+	})
+
+	m.queueCapacity = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "pipeline",
+		Name:      "queue_capacity",
+		Help:      "Configured capacity of the processing queue",
+	}, func() float64 {
+		_, capacity := m.currentQueueStats()
+		return float64(capacity)
 	})
 
 	m.activeWorkers = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
@@ -274,10 +257,6 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		}
 		return 0
 	})
-
-	// ============================================================
-	// Resource Metrics (Memory, GC, Goroutines)
-	// ============================================================
 
 	m.memoryAllocBytes = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Namespace: namespace,
@@ -335,10 +314,6 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		return float64(stats.PauseNs[(stats.NumGC+255)%256]) / 1e9
 	})
 
-	// ============================================================
-	// SLI/SLO Metrics
-	// ============================================================
-
 	m.sloLatencyBucket = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
 		Subsystem: "slo",
@@ -360,13 +335,6 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		Help:      "Total failed requests (for availability SLO)",
 	})
 
-	// ============================================================
-	// Throughput Metrics
-	// ============================================================
-
-	// STARTUP LOG
-	log.Info().Msgf("DEBUG: STARTING NEW METRICS INITIALIZATION. Pointer=%p", internalMetrics)
-
 	m.linesPerSecond = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Namespace: namespace,
 		Subsystem: "pipeline",
@@ -374,11 +342,7 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		Help:      "Current processing throughput in lines per second",
 	}, func() float64 {
 		if internalMetrics != nil {
-			val := internalMetrics.GetSnapshot().LinesPerSecond
-			if val > 0 && int(val)%1000 == 0 {
-				log.Info().Float64("val", val).Msg("DEBUG: LPS is working")
-			}
-			return val
+			return internalMetrics.GetSnapshot().LinesPerSecond
 		}
 		return 0
 	})
@@ -397,20 +361,7 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		Help:      "Total number of log lines processed (accurate count from internal metrics)",
 	}, func() float64 {
 		if internalMetrics != nil {
-			snap := internalMetrics.GetSnapshot()
-			// Use zerolog to ensure it appears in the output stream
-			if snap.TotalLinesProcessed == 0 && snap.LinesPerSecond > 0 {
-				log.Error().
-					Float64("lps", snap.LinesPerSecond).
-					Int64("total_lines", snap.TotalLinesProcessed).
-					Interface("ptr", internalMetrics).
-					Msg("METRICS_DEBUG: Inconsistent state")
-			} else if snap.TotalLinesProcessed > 0 && snap.TotalLinesProcessed%1000 == 0 {
-				log.Info().
-					Int64("total_lines", snap.TotalLinesProcessed).
-					Msg("METRICS_DEBUG: Live count")
-			}
-			return float64(snap.TotalLinesProcessed)
+			return float64(internalMetrics.GetSnapshot().TotalLinesProcessed)
 		}
 		return 0
 	})
@@ -440,10 +391,6 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		return 0
 	})
 
-	// ============================================================
-	// Pipeline Health Metrics
-	// ============================================================
-
 	m.uptimeSeconds = prometheus.NewCounterFunc(prometheus.CounterOpts{
 		Namespace: namespace,
 		Name:      "uptime_seconds_total",
@@ -465,10 +412,6 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		Help:      "Time taken to perform health checks",
 		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 10),
 	})
-
-	// ============================================================
-	// Detection Metrics
-	// ============================================================
 
 	m.detectionsByType = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
@@ -492,33 +435,51 @@ func NewPrometheusMetrics(namespace string, internalMetrics *domain.AnalysisMetr
 		Buckets:   []float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
 	})
 
-	// Register all metrics
+	m.threatIntelEntries = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "threat_intel",
+		Name:      "entries_loaded",
+		Help:      "Threat intelligence entries loaded",
+	})
+	m.threatIntelLastReload = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "threat_intel",
+		Name:      "last_reload_timestamp",
+		Help:      "Unix timestamp of the last threat intelligence reload",
+	})
+	m.threatIntelFeedErrors = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "threat_intel",
+		Name:      "feed_errors_total",
+		Help:      "Threat intelligence feed load errors observed at startup or reload",
+	})
+
 	m.registerMetrics()
 
 	return m
 }
 
-// registerMetrics adds all collectors to the registry.
 func (m *PrometheusMetrics) registerMetrics() {
-	// Build info
+
 	m.registry.MustRegister(m.buildInfo)
 
-	// RED - Rate
 	m.registry.MustRegister(m.linesProcessedTotal)
 	m.registry.MustRegister(m.linesProcessedByType)
 	m.registry.MustRegister(m.alertsGeneratedTotal)
 	m.registry.MustRegister(m.threatsDetectedTotal)
 
-	// RED - Errors
 	m.registry.MustRegister(m.processingErrorsTotal)
 	m.registry.MustRegister(m.parseErrorsTotal)
+	m.registry.MustRegister(m.parseErrorsByReason)
 	m.registry.MustRegister(m.queueOverflowTotal)
+	m.registry.MustRegister(m.alerterErrorsTotal)
 
-	// RED - Duration
 	m.registry.MustRegister(m.processingDuration)
 	m.registry.MustRegister(m.processingDurationSummary)
 
-	// USE - Utilization & Saturation
+	m.registry.MustRegister(m.queueUtilization)
+	m.registry.MustRegister(m.queueSize)
+	m.registry.MustRegister(m.queueCapacity)
 	m.registry.MustRegister(m.activeWorkers)
 	m.registry.MustRegister(m.memoryAllocBytes)
 	m.registry.MustRegister(m.memorySysBytes)
@@ -526,66 +487,85 @@ func (m *PrometheusMetrics) registerMetrics() {
 	m.registry.MustRegister(m.goroutinesCount)
 	m.registry.MustRegister(m.gcLastPauseSeconds)
 
-	// SLI/SLO
 	m.registry.MustRegister(m.sloLatencyBucket)
 	m.registry.MustRegister(m.sloAvailabilityTotal)
 	m.registry.MustRegister(m.sloAvailabilityErrors)
 
-	// Throughput
 	m.registry.MustRegister(m.linesPerSecond)
 	m.registry.MustRegister(m.bytesProcessed)
 	m.registry.MustRegister(m.totalLinesGauge)
 	m.registry.MustRegister(m.maliciousLinesGauge)
 	m.registry.MustRegister(m.cleanLinesGauge)
 
-	// Health
 	m.registry.MustRegister(m.uptimeSeconds)
 	m.registry.MustRegister(m.lastSuccessfulParse)
 	m.registry.MustRegister(m.healthCheckDuration)
 
-	// Detection
 	m.registry.MustRegister(m.detectionsByType)
 	m.registry.MustRegister(m.detectionsBySeverity)
 	m.registry.MustRegister(m.riskScoreHistogram)
+	m.registry.MustRegister(m.threatIntelEntries)
+	m.registry.MustRegister(m.threatIntelLastReload)
+	m.registry.MustRegister(m.threatIntelFeedErrors)
 
-	// Standard Go runtime collectors
 	m.registry.MustRegister(collectors.NewGoCollector())
 	m.registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 }
 
-// ============================================================
-// Metric Update Methods
-// ============================================================
+func (m *PrometheusMetrics) SetThreatIntelStats(entries int, lastReload time.Time, feedErrors int) {
+	m.threatIntelEntries.Set(float64(entries))
+	if !lastReload.IsZero() {
+		m.threatIntelLastReload.Set(float64(lastReload.Unix()))
+	}
+	m.threatIntelFeedErrors.Set(float64(feedErrors))
+}
 
-// IncrementLinesProcessed increments the total lines counter.
+func (m *PrometheusMetrics) SetQueueStatsFunc(fn func() (int, int)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.queueStats = fn
+}
+
+func (m *PrometheusMetrics) currentQueueStats() (int, int) {
+	m.mu.Lock()
+	fn := m.queueStats
+	m.mu.Unlock()
+	if fn == nil {
+		return 0, 0
+	}
+	return fn()
+}
+
 func (m *PrometheusMetrics) IncrementLinesProcessed() {
 	m.linesProcessedTotal.Inc()
 	m.sloAvailabilityTotal.Inc()
 }
 
-// IncrementLinesProcessedByResult categorizes the processing result.
 func (m *PrometheusMetrics) IncrementLinesProcessedByResult(result string) {
+	m.linesProcessedTotal.Inc()
 	m.linesProcessedByType.WithLabelValues(result).Inc()
+	if result == "error" {
+		m.sloAvailabilityErrors.Inc()
+		return
+	}
+	m.sloAvailabilityTotal.Inc()
 }
 
-// IncrementThreats records a detected threat.
 func (m *PrometheusMetrics) IncrementThreats(threatType domain.ThreatType) {
 	m.threatsDetectedTotal.WithLabelValues(string(threatType)).Inc()
 	m.detectionsByType.WithLabelValues(string(threatType)).Inc()
 }
 
-// ObserveProcessingTime records processing duration with SLO tracking.
 func (m *PrometheusMetrics) ObserveProcessingTime(seconds float64) {
 	m.processingDuration.WithLabelValues("total").Observe(seconds)
 	m.processingDurationSummary.WithLabelValues("total").Observe(seconds)
 
-	// Track SLO latency buckets
 	switch {
-	case seconds < 0.001: // < 1ms
+	case seconds < 0.001:
 		m.sloLatencyBucket.WithLabelValues("fast").Inc()
-	case seconds < 0.01: // < 10ms
+	case seconds < 0.01:
 		m.sloLatencyBucket.WithLabelValues("normal").Inc()
-	case seconds < 0.1: // < 100ms
+	case seconds < 0.1:
 		m.sloLatencyBucket.WithLabelValues("slow").Inc()
 	default:
 		m.sloLatencyBucket.WithLabelValues("very_slow").Inc()
@@ -594,37 +574,66 @@ func (m *PrometheusMetrics) ObserveProcessingTime(seconds float64) {
 	m.lastSuccessfulParse.SetToCurrentTime()
 }
 
-// ObserveProcessingTimeByStage records duration for specific pipeline stages.
 func (m *PrometheusMetrics) ObserveProcessingTimeByStage(stage string, seconds float64) {
 	m.processingDuration.WithLabelValues(stage).Observe(seconds)
 	m.processingDurationSummary.WithLabelValues(stage).Observe(seconds)
 }
 
-// IncrementParseErrors records a parsing error.
 func (m *PrometheusMetrics) IncrementParseErrors() {
 	m.parseErrorsTotal.Inc()
 	m.sloAvailabilityErrors.Inc()
 	m.processingErrorsTotal.WithLabelValues("parse").Inc()
 }
 
-// IncrementProcessingErrors records a processing error by type.
+func (m *PrometheusMetrics) IncrementParseErrorByReason(reason string) {
+	if reason == "" {
+		reason = "unknown"
+	}
+	m.parseErrorsByReason.WithLabelValues(normalizeMetricReason(reason)).Inc()
+}
+
+func (m *PrometheusMetrics) IncrementAlerterErrors(output string) {
+	if output == "" {
+		output = "unknown"
+	}
+	m.alerterErrorsTotal.WithLabelValues(output).Inc()
+	m.processingErrorsTotal.WithLabelValues("alerter_error").Inc()
+	m.sloAvailabilityErrors.Inc()
+}
+
+func normalizeMetricReason(reason string) string {
+	reason = strings.ToLower(strings.TrimSpace(reason))
+	if reason == "" {
+		return "unknown"
+	}
+	var b strings.Builder
+	for _, r := range reason {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('_')
+		if b.Len() >= 80 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
 func (m *PrometheusMetrics) IncrementProcessingErrors(errorType string) {
 	m.processingErrorsTotal.WithLabelValues(errorType).Inc()
 	m.sloAvailabilityErrors.Inc()
 }
 
-// IncrementQueueOverflow records a queue overflow event.
 func (m *PrometheusMetrics) IncrementQueueOverflow() {
 	m.queueOverflowTotal.Inc()
 	m.processingErrorsTotal.WithLabelValues("overflow").Inc()
 }
 
-// AddBytesProcessed adds to the bytes processed counter.
 func (m *PrometheusMetrics) AddBytesProcessed(bytes int64) {
 	m.bytesProcessed.Add(float64(bytes))
 }
 
-// RecordAlert records an alert with full categorization.
 func (m *PrometheusMetrics) RecordAlert(alert *domain.Alert) {
 	if alert == nil {
 		return
@@ -641,42 +650,75 @@ func (m *PrometheusMetrics) RecordAlert(alert *domain.Alert) {
 
 }
 
-// RecordHealthCheck records health check duration.
 func (m *PrometheusMetrics) RecordHealthCheck(duration time.Duration) {
 	m.healthCheckDuration.Observe(duration.Seconds())
 }
 
-// ============================================================
-// AlertSubscriber Interface Implementation
-// ============================================================
-
-// OnAlert implements the AlertSubscriber interface for the metrics system.
 func (m *PrometheusMetrics) OnAlert(alert *domain.Alert) {
 	m.RecordAlert(alert)
 }
 
-// ============================================================
-// HTTP Server Management
-// ============================================================
+func (m *PrometheusMetrics) SetReadinessCheck(check func() (bool, string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.readinessCheck = check
+}
 
-// StartServer starts the Prometheus metrics HTTP server.
 func (m *PrometheusMetrics) StartServer(config MetricsConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	mux := http.NewServeMux()
 
-	// Prometheus metrics endpoint with custom registry
 	mux.Handle(config.Path, promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{
 		EnableOpenMetrics:   true,
 		MaxRequestsInFlight: 10,
 	}))
 
-	// Readiness endpoint
 	mux.HandleFunc(config.HealthPath, func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		defer func() {
+			m.RecordHealthCheck(time.Since(start))
+		}()
+
+		ready := true
+		reason := "ready"
+		m.mu.Lock()
+		readinessCheck := m.readinessCheck
+		m.mu.Unlock()
+		if readinessCheck != nil {
+			ready, reason = readinessCheck()
+		}
+
+		statusCode := http.StatusOK
+		status := "ready"
+		if !ready {
+			statusCode = http.StatusServiceUnavailable
+			status = "not_ready"
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ready":          ready,
+			"status":         status,
+			"reason":         reason,
+			"uptime_seconds": time.Since(m.startTime).Seconds(),
+		})
+	})
+
+	livePath := config.LivePath
+	if livePath == "" {
+		livePath = "/live"
+	}
+	mux.HandleFunc(livePath, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ready"}`))
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"live":           true,
+			"status":         "alive",
+			"uptime_seconds": time.Since(m.startTime).Seconds(),
+		})
 	})
 
 	m.server = &http.Server{
@@ -686,7 +728,7 @@ func (m *PrometheusMetrics) StartServer(config MetricsConfig) error {
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
-		MaxHeaderBytes:    1 << 16, // 64KB
+		MaxHeaderBytes:    1 << 16,
 	}
 
 	go func() {
@@ -694,6 +736,7 @@ func (m *PrometheusMetrics) StartServer(config MetricsConfig) error {
 			Str("addr", config.Port).
 			Str("metrics_path", config.Path).
 			Str("health_path", config.HealthPath).
+			Str("live_path", livePath).
 			Str("version", Version).
 			Msg("Starting Prometheus metrics server")
 
@@ -705,36 +748,28 @@ func (m *PrometheusMetrics) StartServer(config MetricsConfig) error {
 	return nil
 }
 
-// StopServer gracefully stops the metrics HTTP server.
 func (m *PrometheusMetrics) StopServer() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	server := m.server
+	m.server = nil
+	m.mu.Unlock()
 
-	if m.server != nil {
+	if server != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return m.server.Shutdown(ctx)
+		return server.Shutdown(ctx)
 	}
 	return nil
 }
 
-// ============================================================
-// Legacy Compatibility Methods
-// ============================================================
-
-// These methods maintain backward compatibility with existing code.
-
-// IncrementRequests is a legacy method for compatibility.
 func (m *PrometheusMetrics) IncrementRequests() {
 	m.IncrementLinesProcessed()
 }
 
-// SetActiveWorkers is a legacy no-op (workers are read from AnalysisMetrics).
 func (m *PrometheusMetrics) SetActiveWorkers(count int) {
-	// No-op: active workers are read from AnalysisMetrics
+
 }
 
-// SetQueueSize is a legacy no-op.
 func (m *PrometheusMetrics) SetQueueSize(size int) {
-	// No-op: queue size is read dynamically
+
 }

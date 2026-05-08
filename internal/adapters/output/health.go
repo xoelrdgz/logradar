@@ -1,12 +1,3 @@
-// Package output provides health checking for LogRadar.
-//
-// HealthChecker implements HTTP health endpoints for container orchestration
-// (Kubernetes, Docker). Checks pipeline latency, queue utilization, and overflow.
-//
-// Endpoints:
-//   - /health: Returns JSON with full status and metrics
-//
-// Thread Safety: Safe for concurrent health checks with caching.
 package output
 
 import (

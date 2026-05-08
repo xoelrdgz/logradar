@@ -34,8 +34,8 @@ run: build
 	@echo "==> Running $(APP_NAME)..."
 	$(BINARY_DIR)/$(APP_NAME) analyze --demo --demo-rate 5000
 run-log: build
-	@echo "==> Running $(APP_NAME) with sample.log..."
-	$(BINARY_DIR)/$(APP_NAME) analyze --log ./testdata/sample.log
+	@echo "==> Running $(APP_NAME) with access.log..."
+	$(BINARY_DIR)/$(APP_NAME) analyze --log ./access.log
 run-notui: build
 	@echo "==> Running $(APP_NAME) in console mode..."
 	$(BINARY_DIR)/$(APP_NAME) analyze --demo --demo-rate 10000 --no-tui
@@ -139,4 +139,3 @@ help:
 	@echo "  make update-deps    Update dependencies"
 	@echo "  make fuzz           Run fuzz tests (5 min)"
 	@echo "  make security-check Run full security check"
-

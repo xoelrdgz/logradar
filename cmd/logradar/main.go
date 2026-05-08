@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -16,6 +18,7 @@ import (
 	"github.com/xoelrdgz/logradar/internal/adapters/input"
 	"github.com/xoelrdgz/logradar/internal/adapters/output"
 	"github.com/xoelrdgz/logradar/internal/app"
+	"github.com/xoelrdgz/logradar/internal/domain"
 	"github.com/xoelrdgz/logradar/internal/ports"
 	"github.com/xoelrdgz/logradar/internal/tui"
 )
@@ -28,6 +31,8 @@ var (
 	fullAnalysis bool
 	demoMode     bool
 	demoRate     int
+	stdinMode    bool
+	batchMode    bool
 	workers      int
 
 	Version   = "dev"
@@ -35,11 +40,19 @@ var (
 	BuildTime = "unknown"
 )
 
+type threatsDetectedError struct {
+	count int64
+}
+
+func (e threatsDetectedError) Error() string {
+	return fmt.Sprintf("threats detected: %d alerts emitted", e.count)
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "logradar",
 	Short: "Production-grade HTTP log threat detection",
-	Long: `LogRadar is a production-grade, real-time threat detection system 
-for HTTP access logs. It monitors log files, detects attack patterns, 
+	Long: `LogRadar is a production-grade, real-time threat detection system
+for HTTP access logs. It monitors log files, detects attack patterns,
 and displays results in an interactive terminal interface.
 
 Detection Capabilities:
@@ -87,12 +100,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&fullAnalysis, "full", false, "analyze entire file from beginning")
 	rootCmd.PersistentFlags().BoolVar(&demoMode, "demo", false, "demo mode: generate synthetic traffic")
 	rootCmd.PersistentFlags().IntVar(&demoRate, "demo-rate", 1000, "demo mode: entries per second")
+	rootCmd.PersistentFlags().BoolVar(&stdinMode, "stdin", false, "read log entries from stdin until EOF")
+	rootCmd.PersistentFlags().BoolVar(&batchMode, "batch", false, "process finite input and exit")
 	rootCmd.PersistentFlags().IntVarP(&workers, "workers", "w", 16, "number of worker goroutines")
-
-	viper.BindPFlag("log.path", rootCmd.PersistentFlags().Lookup("log"))
-	viper.BindPFlag("tui.enabled", rootCmd.PersistentFlags().Lookup("no-tui"))
-	viper.BindPFlag("output.json.enabled", rootCmd.PersistentFlags().Lookup("json"))
-	viper.BindPFlag("workers.count", rootCmd.PersistentFlags().Lookup("workers"))
 
 	rootCmd.AddCommand(analyzeCmd)
 	rootCmd.AddCommand(versionCmd)
@@ -109,14 +119,37 @@ func initConfig() {
 		viper.AddConfigPath("/etc/logradar")
 	}
 
-	viper.SetDefault("log.path", "./testdata/sample.log")
+	viper.SetDefault("log.path", "./access.log")
+	viper.SetDefault("app.shutdown_timeout_seconds", 5)
+	viper.SetDefault("log.checkpoint.enabled", false)
+	viper.SetDefault("log.checkpoint.path", "")
 	viper.SetDefault("workers.count", 16)
 	viper.SetDefault("workers.buffer_size", 50000)
+	viper.SetDefault("workers.submit_timeout_ms", 100)
+	viper.SetDefault("workers.overflow_path", "")
+	viper.SetDefault("workers.quarantine_path", "")
 	viper.SetDefault("tui.enabled", true)
 	viper.SetDefault("output.json.enabled", false)
 	viper.SetDefault("output.json.stdout", true)
+	viper.SetDefault("output.json.redact_sensitive", true)
+	viper.SetDefault("output.json.include_raw_log", true)
+	viper.SetDefault("output.json.max_alert_bytes", 65536)
 	viper.SetDefault("output.metrics.enabled", true)
 	viper.SetDefault("output.metrics.port", ":9090")
+	viper.SetDefault("output.metrics.path", "/metrics")
+	viper.SetDefault("output.dedup.enabled", false)
+	viper.SetDefault("output.dedup.window_seconds", 60)
+	viper.SetDefault("log.format", "combined")
+	viper.SetDefault("detection.signatures.enabled", true)
+	viper.SetDefault("detection.signatures.rules_file", "")
+	viper.SetDefault("detection.behavioral.enabled", true)
+	viper.SetDefault("detection.allowlist.ips", []string{})
+	viper.SetDefault("detection.allowlist.cidrs", []string{})
+	viper.SetDefault("detection.allowlist.path_prefixes", []string{})
+	viper.SetDefault("detection.allowlist.user_agent_substrings", []string{})
+	viper.SetDefault("threat_intel.enabled", false)
+	viper.SetDefault("threat_intel.feed_files", []string{})
+	viper.SetDefault("threat_intel.default_ttl_seconds", 0)
 	viper.SetDefault("detection.behavioral.brute_force.threshold", 10)
 	viper.SetDefault("detection.behavioral.brute_force.window_seconds", 60)
 	viper.SetDefault("detection.behavioral.rate_limit.threshold", 100)
@@ -129,13 +162,14 @@ func initConfig() {
 	}
 
 	viper.SetEnvPrefix("LOGRADAR")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 }
 
-func setupLogging() {
+func setupLogging(cfg app.RuntimeConfig) {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 
-	level := viper.GetString("logging.level")
+	level := cfg.Logging.Level
 	switch level {
 	case "debug":
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
@@ -157,34 +191,197 @@ func setupLogging() {
 	}
 }
 
-func runAnalyze(cmd *cobra.Command, args []string) error {
-	setupLogging()
+func configuredParser(format string) (ports.LogParser, error) {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "combined", "clf":
+		return input.NewCombinedLogParser(), nil
+	case "json":
+		return input.NewJSONParser(), nil
+	case "auto", "autodetect", "auto-detect":
+		return input.NewAutoDetectParser(), nil
+	default:
+		return nil, fmt.Errorf("unsupported log.format %q: valid values are combined, json or auto", format)
+	}
+}
 
-	logPath := viper.GetString("log.path")
-	if logFile != "" {
-		logPath = logFile
+type detectorRuntimeStats struct {
+	ThreatIntelEntries    int
+	ThreatIntelLastReload time.Time
+	ThreatIntelFeedErrors int
+}
+
+func configuredDetectors(ctx context.Context, cfg app.RuntimeConfig) ([]ports.ThreatDetector, func(), detectorRuntimeStats, error) {
+	var detectors []ports.ThreatDetector
+	var cleanup []func()
+	var stats detectorRuntimeStats
+
+	if cfg.Detection.Signatures.Enabled {
+		patterns, err := configuredSignaturePatterns(cfg.Detection.Signatures)
+		if err != nil {
+			return nil, nil, stats, err
+		}
+		sigDetector := detection.NewSignatureDetector(patterns)
+		detectors = append(detectors, sigDetector)
+		log.Debug().Int("patterns", sigDetector.PatternCount()).Msg("Signature patterns loaded")
 	}
 
-	if logPath == "" && !demoMode {
-		return fmt.Errorf("log file path required: use --log or --demo flag")
+	if cfg.Detection.Behavioral.Enabled {
+		behavConfig := detection.BehavioralConfig{
+			ShardCount:          16,
+			BruteForceThreshold: cfg.Detection.Behavioral.BruteForce.Threshold,
+			BruteForceWindow:    cfg.Detection.Behavioral.BruteForce.WindowSeconds,
+			BruteForceStatus:    cfg.Detection.Behavioral.BruteForce.StatusCode,
+			RateLimitThreshold:  cfg.Detection.Behavioral.RateLimit.Threshold,
+			RateLimitWindow:     cfg.Detection.Behavioral.RateLimit.WindowSeconds,
+			CleanupInterval:     30 * time.Second,
+		}
+		if behavConfig.BruteForceStatus == 0 {
+			behavConfig.BruteForceStatus = 401
+		}
+		behavDetector := detection.NewBehavioralDetector(behavConfig)
+		detectors = append(detectors, behavDetector)
+		cleanup = append(cleanup, behavDetector.Stop)
+	}
+
+	if cfg.ThreatIntel.Enabled {
+		threatIntelConfig := detection.DefaultThreatIntelConfig()
+		if cfg.ThreatIntel.MaliciousIPsFile != "" {
+			threatIntelConfig.Filepath = cfg.ThreatIntel.MaliciousIPsFile
+		}
+		threatIntelConfig.FeedFiles = cfg.ThreatIntel.FeedFiles
+		if cfg.ThreatIntel.BloomFilterSize > 0 {
+			threatIntelConfig.BloomSize = cfg.ThreatIntel.BloomFilterSize
+		}
+		if cfg.ThreatIntel.BloomFalsePositiveRate > 0 {
+			threatIntelConfig.FalsePositiveRate = cfg.ThreatIntel.BloomFalsePositiveRate
+		}
+		if cfg.ThreatIntel.DefaultTTLSeconds > 0 {
+			threatIntelConfig.DefaultTTL = time.Duration(cfg.ThreatIntel.DefaultTTLSeconds) * time.Second
+		}
+		threatIntel := detection.NewThreatIntelligence(threatIntelConfig)
+		if err := threatIntel.Load(ctx); err != nil {
+			log.Warn().Err(err).Msg("Failed to load threat intelligence")
+			stats.ThreatIntelFeedErrors = 1
+		} else {
+			log.Debug().Int("count", threatIntel.Count()).Msg("Threat intelligence loaded")
+			stats.ThreatIntelEntries = threatIntel.Count()
+			stats.ThreatIntelLastReload = time.Now()
+		}
+		detectors = append(detectors, detection.NewThreatIntelDetector(threatIntel))
+	}
+
+	if len(detectors) == 0 {
+		return nil, nil, stats, fmt.Errorf("no detectors enabled: enable at least one of detection.signatures, detection.behavioral or threat_intel")
+	}
+
+	return detectors, func() {
+		for _, stop := range cleanup {
+			stop()
+		}
+	}, stats, nil
+}
+
+func configuredSignaturePatterns(config app.SignatureRuntimeConfig) ([]*detection.Pattern, error) {
+	var patterns []*detection.Pattern
+	if config.RulesFile != "" {
+		loaded, err := detection.LoadSignatureRulesFile(config.RulesFile)
+		if err != nil {
+			return nil, err
+		}
+		patterns = append(patterns, loaded...)
+	}
+	if len(config.Patterns) == 0 {
+		if len(patterns) > 0 {
+			return patterns, nil
+		}
+		return nil, nil
+	}
+
+	patterns = append(detection.DefaultPatterns(), patterns...)
+	for name, expr := range config.Patterns {
+		compiled, err := regexp.Compile(expr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid signature pattern %q: %w", name, err)
+		}
+		patterns = append(patterns, &detection.Pattern{
+			ID:         "configured." + strings.ToLower(strings.ReplaceAll(name, "_", ".")),
+			Version:    "1",
+			Name:       "Configured - " + name,
+			Regex:      compiled,
+			ThreatType: configuredThreatType(name),
+			RiskScore:  8,
+			Level:      domain.AlertLevelWarning,
+			Confidence: 0.85,
+			Keywords:   strings.FieldsFunc(strings.ToLower(name), func(r rune) bool { return r == '_' || r == '-' || r == ' ' }),
+		})
+	}
+	return patterns, nil
+}
+
+func configuredThreatType(name string) domain.ThreatType {
+	switch strings.ToLower(name) {
+	case "sqli", "sql", "sql_injection":
+		return domain.ThreatTypeSQLInjection
+	case "xss":
+		return domain.ThreatTypeXSS
+	case "traversal", "path_traversal":
+		return domain.ThreatTypePathTraversal
+	case "rce":
+		return domain.ThreatTypeRCE
+	case "lfi":
+		return domain.ThreatTypeLFI
+	case "log4shell":
+		return domain.ThreatTypeLog4Shell
+	default:
+		return domain.ThreatTypeUnknown
+	}
+}
+
+func runAnalyze(cmd *cobra.Command, args []string) error {
+	cfg := app.LoadRuntimeConfig()
+
+	if cmd.Flags().Changed("log") {
+		cfg.Log.Path = logFile
+	}
+	if cmd.Flags().Changed("workers") {
+		cfg.Workers.Count = workers
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	setupLogging(cfg)
+
+	logPath := cfg.Log.Path
+	effectiveTUI := cfg.TUI.Enabled && !noTUI && !stdinMode && !batchMode
+
+	if logPath == "" && !demoMode && !stdinMode {
+		return fmt.Errorf("log file path required: use --log, --stdin or --demo flag")
 	}
 
 	sourceName := "DEMO"
-	if !demoMode {
+	if stdinMode {
+		sourceName = "STDIN"
+	} else if !demoMode {
 		sourceName = filepath.Base(logPath)
 	}
 
 	if demoMode {
 		log.Info().
 			Int("rate", demoRate).
-			Int("workers", viper.GetInt("workers.count")).
-			Bool("tui", !noTUI).
+			Int("workers", cfg.Workers.Count).
+			Bool("tui", effectiveTUI).
 			Msg("LogRadar started (demo mode)")
+	} else if stdinMode {
+		log.Info().
+			Int("workers", cfg.Workers.Count).
+			Bool("batch", batchMode).
+			Msg("LogRadar started (stdin mode)")
 	} else {
 		log.Info().
 			Str("source", logPath).
-			Int("workers", viper.GetInt("workers.count")).
-			Bool("tui", !noTUI).
+			Int("workers", cfg.Workers.Count).
+			Bool("tui", effectiveTUI).
 			Msg("LogRadar started")
 	}
 
@@ -195,64 +392,61 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if demoMode {
 		config := input.DemoConfig{
 			Rate:          demoRate,
-			BufferSize:    viper.GetInt("workers.buffer_size"),
+			BufferSize:    cfg.Workers.BufferSize,
 			AttackPercent: 15,
 		}
 		reader = input.NewDemoGenerator(config)
 		log.Debug().Int("rate", demoRate).Msg("Demo generator initialized")
 	} else {
-		parser := input.NewCombinedLogParser()
-		tailer := input.NewFileTailer(logPath, parser, viper.GetInt("workers.buffer_size"))
-		if fullAnalysis {
-			tailer.SetFromBeginning(true)
-			log.Info().Msg("Full analysis mode: reading from beginning")
+		parser, err := configuredParser(cfg.Log.Format)
+		if err != nil {
+			return err
 		}
-		reader = tailer
+		if stdinMode {
+			reader = input.NewStreamReader("stdin", os.Stdin, parser, cfg.Workers.BufferSize)
+		} else if batchMode {
+			file, err := os.Open(logPath)
+			if err != nil {
+				return fmt.Errorf("failed to open batch input: %w", err)
+			}
+			defer file.Close()
+			reader = input.NewStreamReader(logPath, file, parser, cfg.Workers.BufferSize)
+		} else {
+			tailer := input.NewFileTailer(logPath, parser, cfg.Workers.BufferSize)
+			tailer.SetCheckpoint(input.CheckpointConfig{
+				Enabled: cfg.Log.Checkpoint.Enabled,
+				Path:    cfg.Log.Checkpoint.Path,
+			})
+			if fullAnalysis {
+				tailer.SetFromBeginning(true)
+				log.Info().Msg("Full analysis mode: reading from beginning")
+			}
+			reader = tailer
+		}
 	}
 
-	var detectors []ports.ThreatDetector
-
-	sigDetector := detection.NewSignatureDetector(nil)
-	detectors = append(detectors, sigDetector)
-	log.Debug().Int("patterns", sigDetector.PatternCount()).Msg("Signature patterns loaded")
-
-	behavConfig := detection.BehavioralConfig{
-		ShardCount:          16,
-		BruteForceThreshold: viper.GetInt("detection.behavioral.brute_force.threshold"),
-		BruteForceWindow:    int64(viper.GetInt("detection.behavioral.brute_force.window_seconds")),
-		BruteForceStatus:    401,
-		RateLimitThreshold:  viper.GetInt("detection.behavioral.rate_limit.threshold"),
-		RateLimitWindow:     int64(viper.GetInt("detection.behavioral.rate_limit.window_seconds")),
-		CleanupInterval:     30 * time.Second,
+	detectors, cleanupDetectors, detectorStats, err := configuredDetectors(ctx, cfg)
+	if err != nil {
+		return err
 	}
-	behavDetector := detection.NewBehavioralDetector(behavConfig)
-	detectors = append(detectors, behavDetector)
-	defer behavDetector.Stop()
-
-	threatIntelConfig := detection.DefaultThreatIntelConfig()
-	threatIntelConfig.Filepath = viper.GetString("threat_intel.malicious_ips_file")
-	if threatIntelConfig.Filepath == "" {
-		threatIntelConfig.Filepath = "./testdata/malicious_ips.txt"
-	}
-	threatIntel := detection.NewThreatIntelligence(threatIntelConfig)
-	if err := threatIntel.Load(ctx); err != nil {
-		log.Warn().Err(err).Msg("Failed to load threat intelligence")
-	} else {
-		log.Debug().Int("count", threatIntel.Count()).Msg("Threat intelligence loaded")
-	}
-	threatIntelDetector := detection.NewThreatIntelDetector(threatIntel)
-	detectors = append(detectors, threatIntelDetector)
+	defer cleanupDetectors()
 
 	var alerters []ports.Alerter
 	memAlerter := output.NewMemoryAlerter(100)
 	alerters = append(alerters, memAlerter)
+	defer func() {
+		closeAlerters(alerters)
+	}()
 
-	if jsonOut || viper.GetBool("output.json.enabled") {
+	if jsonOut || cfg.Output.JSON.Enabled {
 		jsonConfig := output.JSONAlerterConfig{
-			Stdout: viper.GetBool("output.json.stdout") || jsonOut,
-			Pretty: true,
+			Stdout:        cfg.Output.JSON.Stdout || jsonOut,
+			Pretty:        true,
+			Redact:        cfg.Output.JSON.RedactSensitive,
+			IncludeRawLog: cfg.Output.JSON.IncludeRawLog,
+			MaxAlertBytes: cfg.Output.JSON.MaxAlertBytes,
 		}
-		if path := viper.GetString("output.json.path"); path != "" && !jsonOut {
+		if path := cfg.Output.JSON.Path; path != "" && !jsonOut {
 			jsonConfig.FilePath = path
 			jsonConfig.Stdout = false
 		}
@@ -260,30 +454,62 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create JSON alerter: %w", err)
 		}
-		alerters = append(alerters, jsonAlerter)
-		defer jsonAlerter.Close()
+		var jsonOutput ports.Alerter = jsonAlerter
+		if cfg.Output.Dedup.Enabled {
+			jsonOutput = output.NewDeduplicatingAlerter(jsonAlerter, output.DedupConfig{
+				Enabled: true,
+				Window:  time.Duration(cfg.Output.Dedup.WindowSeconds) * time.Second,
+			})
+		}
+		alerters = append(alerters, jsonOutput)
 	}
 
 	analyzer := app.NewAnalyzer(reader, detectors, alerters)
 
 	workerConfig := app.WorkerPoolConfig{
-		WorkerCount: viper.GetInt("workers.count"),
-		BufferSize:  viper.GetInt("workers.buffer_size"),
+		WorkerCount:    cfg.Workers.Count,
+		BufferSize:     cfg.Workers.BufferSize,
+		SubmitTimeout:  time.Duration(cfg.Workers.SubmitTimeout) * time.Millisecond,
+		OverflowPath:   cfg.Workers.OverflowPath,
+		QuarantinePath: cfg.Workers.QuarantinePath,
 	}
-	if workers > 0 {
-		workerConfig.WorkerCount = workers
+	allowlist, err := app.NewAllowlist(app.AllowlistConfig{
+		IPs:             cfg.Detection.Allowlist.IPs,
+		CIDRs:           cfg.Detection.Allowlist.CIDRs,
+		PathPrefixes:    cfg.Detection.Allowlist.PathPrefixes,
+		UserAgentSubstr: cfg.Detection.Allowlist.UserAgentSubstr,
+	})
+	if err != nil {
+		return fmt.Errorf("invalid detection.allowlist: %w", err)
 	}
+	workerConfig.Allowlist = allowlist
 	analyzer.SetWorkerConfig(workerConfig)
 
-	if viper.GetBool("output.metrics.enabled") {
+	if cfg.Output.Metrics.Enabled {
 		promMetrics := output.NewPrometheusMetrics("logradar", analyzer.InternalMetrics())
+		promMetrics.SetQueueStatsFunc(analyzer.QueueStats)
+		promMetrics.SetThreatIntelStats(
+			detectorStats.ThreatIntelEntries,
+			detectorStats.ThreatIntelLastReload,
+			detectorStats.ThreatIntelFeedErrors,
+		)
+		promMetrics.SetReadinessCheck(func() (bool, string) {
+			if err := analyzer.Err(); err != nil {
+				return false, err.Error()
+			}
+			if analyzer.IsRunning() {
+				return true, "analyzer running"
+			}
+			return false, "analyzer not running"
+		})
 		analyzer.AddAlertSubscriber(promMetrics)
 		analyzer.AddProcessingObserver(promMetrics)
 
 		metricsConfig := output.MetricsConfig{
-			Port:       viper.GetString("output.metrics.port"),
-			Path:       "/metrics",
+			Port:       cfg.Output.Metrics.Port,
+			Path:       cfg.Output.Metrics.Path,
 			HealthPath: "/ready",
+			LivePath:   "/live",
 		}
 		if err := promMetrics.StartServer(metricsConfig); err != nil {
 			log.Warn().Err(err).Msg("Failed to start metrics server")
@@ -293,10 +519,19 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		defer promMetrics.StopServer()
 	}
 
-	if noTUI {
+	if !effectiveTUI {
 		log.Info().Msg("Running in console mode")
 		analyzer.AddAlertSubscriber(memAlerter)
-		return analyzer.Run(ctx)
+		err := analyzer.Run(ctx)
+		if err != nil {
+			return err
+		}
+		if batchMode {
+			if alerts := analyzer.Metrics().TotalAlerts; alerts > 0 {
+				return threatsDetectedError{count: alerts}
+			}
+		}
+		return nil
 	}
 
 	tuiApp := tui.NewApp()
@@ -344,16 +579,34 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	select {
 	case <-shutdownDone:
 		log.Debug().Msg("Shutdown complete")
-	case <-time.After(5 * time.Second):
+	case <-time.After(time.Duration(cfg.App.ShutdownTimeoutSeconds) * time.Second):
 		log.Warn().Msg("Shutdown timeout, forcing exit")
 	}
 
+	if err := analyzer.Err(); err != nil {
+		return err
+	}
 	return tuiErr
+}
+
+func closeAlerters(alerters []ports.Alerter) {
+	for i := len(alerters) - 1; i >= 0; i-- {
+		alerter := alerters[i]
+		if err := alerter.Flush(); err != nil {
+			log.Error().Err(err).Msg("Failed to flush alerter")
+		}
+		if err := alerter.Close(); err != nil {
+			log.Error().Err(err).Msg("Failed to close alerter")
+		}
+	}
 }
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if _, ok := err.(threatsDetectedError); ok {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }

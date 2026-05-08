@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +101,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		case "tab":
 			a.model.NextView()
+		case "p":
+			a.model.TogglePause()
+		case "f":
+			a.model.CycleSeverityFilter()
+			a.alerts.Update(a.model.GetAlerts())
+		case "c":
+			a.model.ClearFilters()
+			a.alerts.Update(a.model.GetAlerts())
+		case "e":
+			a.exportSelectedAlert()
 		case "up", "k":
 			a.alerts.ScrollUp()
 		case "down", "j":
@@ -132,6 +145,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.lastMetrics = domain.MetricsSnapshot(msg)
 		a.model.UpdateMetrics(a.lastMetrics)
 		a.throughput.Update(a.lastMetrics.LinesPerSecond)
+		a.status.Dropped = a.DroppedAlerts()
 		a.status.Update(a.lastMetrics)
 		return a, a.listenForMetrics()
 	}
@@ -140,6 +154,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (a *App) processBatchedAlerts() {
 	a.topIPs.Update(convertIPEntries(a.model.GetTopIPs()))
+	if a.model.Paused {
+		return
+	}
 
 	a.alertBufferMu.Lock()
 	defer a.alertBufferMu.Unlock()
@@ -197,6 +214,8 @@ func (a *App) View() string {
 		content = a.topIPs.Render()
 	}
 	b.WriteString(muted.Render("  " + viewName))
+	b.WriteString("  ")
+	b.WriteString(dim.Render(a.model.FilterSummary()))
 	b.WriteString("\n")
 	b.WriteString(content)
 
@@ -209,28 +228,45 @@ func (a *App) View() string {
 }
 
 func (a *App) renderHeader() string {
-	green := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
-	red := lipgloss.NewStyle().Foreground(ColorCritical)
+	titleStyle := lipgloss.NewStyle().Foreground(ColorText).Bold(true)
+	accent := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
+	red := lipgloss.NewStyle().Foreground(ColorCritical).Bold(true)
 	dim := lipgloss.NewStyle().Foreground(ColorDim)
+	muted := lipgloss.NewStyle().Foreground(ColorMuted)
+	badge := lipgloss.NewStyle().
+		Foreground(ColorPrimary).
+		Background(ColorPrimaryBg).
+		Padding(0, 1)
 
-	title := green.Render("LOGRADAR")
-
-	status := green.Render("SCANNING")
+	status := badge.Render("SCANNING")
 	if a.lastMetrics.MaliciousLines > 0 {
 		status = red.Render("ACTIVE THREATS")
 	}
+	if a.model.Paused {
+		status = muted.Render("PAUSED")
+	}
 
-	return fmt.Sprintf("  %s  %s  %s %s",
-		title, status,
-		dim.Render("SRC:"), a.logSource)
+	left := fmt.Sprintf("  %s %s %s",
+		accent.Render("LR"),
+		titleStyle.Render("LOGRADAR"),
+		dim.Render("HTTP THREAT RADAR"))
+	right := fmt.Sprintf("%s  %s %s",
+		status,
+		dim.Render("SRC"),
+		muted.Render(a.logSource))
+	width := a.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if width < 1 {
+		width = 1
+	}
+	return left + dim.Render(strings.Repeat("·", width)) + right
 }
 
 func (a *App) renderHelp() string {
 	dim := lipgloss.NewStyle().Foreground(ColorDim)
 	key := lipgloss.NewStyle().Foreground(ColorPrimaryDim)
 	views := []string{"ALERTS", "IPs"}
-	return dim.Render(fmt.Sprintf("  %s [%s]  %s scroll  %s inspect  %s quit",
-		key.Render("TAB"), views[a.model.ActiveView], key.Render("↑↓"), key.Render("ENTER"), key.Render("q")))
+	return dim.Render(fmt.Sprintf("  %s [%s]  %s pause  %s severity  %s clear  %s export  %s scroll  %s inspect  %s quit",
+		key.Render("TAB"), views[a.model.ActiveView], key.Render("p"), key.Render("f"), key.Render("c"), key.Render("e"), key.Render("↑↓"), key.Render("ENTER"), key.Render("q")))
 }
 
 func (a *App) SendAlert(alert *domain.Alert) {
@@ -258,5 +294,18 @@ func (a *App) DroppedAlerts() int64 {
 	a.alertBufferMu.Lock()
 	defer a.alertBufferMu.Unlock()
 	return a.droppedAlerts
+}
+
+func (a *App) exportSelectedAlert() {
+	selected := a.alerts.GetSelected()
+	if selected == nil {
+		return
+	}
+	_ = os.MkdirAll("output", 0750)
+	data, err := json.MarshalIndent(selected, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join("output", "selected-alert.json"), append(data, '\n'), 0600)
 }
 func (a *App) Run() error { p := tea.NewProgram(a, tea.WithAltScreen()); _, err := p.Run(); return err }

@@ -3,6 +3,7 @@ package detection
 import (
 	"context"
 	"net/netip"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -151,6 +152,63 @@ func TestSignatureDetector_PathTraversal(t *testing.T) {
 	}
 }
 
+func TestSignatureDetector_BenignTrafficDoesNotTrigger(t *testing.T) {
+	detector := NewSignatureDetector(nil)
+	tests := []domain.LogEntry{
+		{
+			IP:        netip.MustParseAddr("10.0.0.1"),
+			Path:      "/search?q=selecting+the+right+union+benefits",
+			UserAgent: "Mozilla/5.0",
+		},
+		{
+			IP:        netip.MustParseAddr("10.0.0.2"),
+			Path:      "/docs/javascript-guide",
+			UserAgent: "Mozilla/5.0",
+		},
+		{
+			IP:        netip.MustParseAddr("10.0.0.3"),
+			Path:      "/blog/administering-linux-safely",
+			UserAgent: "Mozilla/5.0",
+		},
+	}
+
+	for _, entry := range tests {
+		result := detector.Detect(context.Background(), &entry)
+		if result.Detected {
+			t.Fatalf("benign entry %q detected as %s by %s", entry.Path, result.ThreatType, result.RuleID)
+		}
+	}
+}
+
+func TestSignatureDetector_AuditRuleDetectsWithoutActiveAlertIntent(t *testing.T) {
+	patterns := []*Pattern{
+		{
+			ID:         "test.audit",
+			Version:    "1",
+			Name:       "Audit Test",
+			Regex:      regexp.MustCompile(`audit_payload`),
+			ThreatType: domain.ThreatTypeUnknown,
+			RiskScore:  5,
+			Level:      domain.AlertLevelInfo,
+			Confidence: 0.5,
+			Audit:      true,
+			Keywords:   []string{"audit_payload"},
+		},
+	}
+	detector := NewSignatureDetector(patterns)
+	result := detector.Detect(context.Background(), &domain.LogEntry{
+		IP:   netip.MustParseAddr("10.0.0.1"),
+		Path: "/?q=audit_payload",
+	})
+
+	if !result.Detected {
+		t.Fatal("Detected = false, want true")
+	}
+	if !result.Audit {
+		t.Fatal("Audit = false, want true")
+	}
+}
+
 func TestSignatureDetector_UserAgent(t *testing.T) {
 	detector := NewSignatureDetector(nil)
 
@@ -163,6 +221,11 @@ func TestSignatureDetector_UserAgent(t *testing.T) {
 	result := detector.Detect(context.Background(), entry)
 	assert.True(t, result.Detected)
 	assert.Equal(t, domain.ThreatTypeXSS, result.ThreatType)
+	assert.NotEmpty(t, result.RuleID)
+	assert.NotEmpty(t, result.RuleVersion)
+	assert.Greater(t, result.Confidence, 0.0)
+	assert.Equal(t, "user_agent", result.Evidence.Field)
+	assert.Contains(t, result.Evidence.Fragment, "script")
 }
 
 func TestSignatureDetector_NilEntry(t *testing.T) {

@@ -1,12 +1,8 @@
-// Package app provides the core application orchestration layer for LogRadar.
-//
-// The Analyzer component coordinates log reading, threat detection, and alert
-// dispatch through a concurrent worker pool architecture optimized for
-// high-throughput (>50K lines/second) production workloads.
 package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"runtime"
@@ -20,61 +16,33 @@ import (
 	"github.com/xoelrdgz/logradar/internal/ports"
 )
 
-// Analyzer orchestrates the log analysis pipeline from input to output.
-//
-// Responsibilities:
-//   - Coordinates log reader startup and shutdown
-//   - Manages worker pool lifecycle
-//   - Collects and exposes runtime metrics
-//   - Handles graceful shutdown with timeout
-//
-// Thread Safety:
-//   - Safe for concurrent method calls via internal mutex
-//   - Alert subscribers notified synchronously from worker goroutines
-//
-// Lifecycle:
-//  1. Create with NewAnalyzer()
-//  2. Configure via SetWorkerConfig() (before start)
-//  3. Add subscribers via AddAlertSubscriber()
-//  4. Start with Start(ctx) or Run(ctx)
-//  5. Stop with Stop() or context cancellation
+type expectedEOFReader interface {
+	ExpectedEOF() bool
+}
+
 type Analyzer struct {
-	reader     ports.LogReader         // Log entry source (FileTailer or DemoGenerator)
-	workerPool *WorkerPool             // Concurrent detection pipeline
-	metrics    *domain.AnalysisMetrics // Runtime metrics collector
-	alertSubs  []ports.AlertSubscriber // Notification callbacks
+	reader     ports.LogReader
+	workerPool *WorkerPool
+	metrics    *domain.AnalysisMetrics
+	alertSubs  []ports.AlertSubscriber
+	observers  []ports.ProcessingObserver
 
-	ctx     context.Context    // Lifecycle context
-	cancel  context.CancelFunc // Shutdown trigger
-	wg      sync.WaitGroup     // Goroutine completion tracking
-	running bool               // Running state flag
-	mu      sync.RWMutex       // Protects running flag and alertSubs
+	ctx     context.Context
+	cancel  context.CancelFunc
+	done    chan struct{}
+	err     error
+	wg      sync.WaitGroup
+	running bool
+	mu      sync.RWMutex
 
-	lastLinesProcessed int64     // For LPS calculation
-	lastLPSCheck       time.Time // For LPS calculation
+	lastLinesProcessed int64
+	lastLPSCheck       time.Time
 }
 
-// AnalyzerConfig aggregates configuration for the analyzer and its components.
 type AnalyzerConfig struct {
-	WorkerConfig WorkerPoolConfig // Worker pool configuration
+	WorkerConfig WorkerPoolConfig
 }
 
-// NewAnalyzer creates an Analyzer with the specified components.
-//
-// Parameters:
-//   - reader: Log source (FileTailer for production, DemoGenerator for testing)
-//   - detectors: Slice of threat detectors to apply to each entry
-//   - alerters: Slice of alert outputs (JSON, memory, etc.)
-//
-// Returns:
-//   - Configured Analyzer ready for Start()
-//
-// Example:
-//
-//	reader := input.NewFileTailer(path, parser, bufferSize)
-//	detectors := []ports.ThreatDetector{sigDetector, behavDetector}
-//	alerters := []ports.Alerter{memAlerter, jsonAlerter}
-//	analyzer := app.NewAnalyzer(reader, detectors, alerters)
 func NewAnalyzer(
 	reader ports.LogReader,
 	detectors []ports.ThreatDetector,
@@ -88,18 +56,11 @@ func NewAnalyzer(
 		reader:       reader,
 		workerPool:   workerPool,
 		metrics:      metrics,
+		done:         make(chan struct{}),
 		lastLPSCheck: time.Now(),
 	}
 }
 
-// SetWorkerConfig updates worker pool configuration before startup.
-//
-// Parameters:
-//   - config: Worker pool settings (worker count, buffer sizes)
-//
-// Precondition: Analyzer must not be running. No-op if already started.
-//
-// Warning: Calling this after Start() has no effect and logs a warning.
 func (a *Analyzer) SetWorkerConfig(config WorkerPoolConfig) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -112,13 +73,6 @@ func (a *Analyzer) SetWorkerConfig(config WorkerPoolConfig) {
 	a.workerPool = NewWorkerPool(config, a.workerPool.detectors, a.workerPool.alerters, a.metrics)
 }
 
-// AddAlertSubscriber registers a callback for alert notifications.
-//
-// Parameters:
-//   - sub: Subscriber to notify when alerts are generated
-//
-// Thread Safety: Safe to call before or during operation.
-// Subscribers added after start will receive new alerts immediately.
 func (a *Analyzer) AddAlertSubscriber(sub ports.AlertSubscriber) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -126,27 +80,13 @@ func (a *Analyzer) AddAlertSubscriber(sub ports.AlertSubscriber) {
 	a.workerPool.AddSubscriber(sub)
 }
 
-// AddProcessingObserver registers a callback for processing results.
 func (a *Analyzer) AddProcessingObserver(obs ports.ProcessingObserver) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.observers = append(a.observers, obs)
 	a.workerPool.AddObserver(obs)
 }
 
-// Start begins asynchronous log analysis.
-//
-// Parameters:
-//   - ctx: Context for lifecycle management (cancellation triggers shutdown)
-//
-// Returns:
-//   - nil on successful startup
-//   - nil if already running (idempotent)
-//
-// Behavior:
-//   - Starts worker pool
-//   - Starts log reader
-//   - Spawns goroutines for entry processing and metrics updates
-//   - Returns immediately (non-blocking)
 func (a *Analyzer) Start(ctx context.Context) error {
 	a.mu.Lock()
 	if a.running {
@@ -154,6 +94,8 @@ func (a *Analyzer) Start(ctx context.Context) error {
 		return nil
 	}
 	a.running = true
+	a.err = nil
+	a.done = make(chan struct{})
 	a.mu.Unlock()
 
 	a.ctx, a.cancel = context.WithCancel(ctx)
@@ -165,6 +107,7 @@ func (a *Analyzer) Start(ctx context.Context) error {
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
+		defer a.finish(nil)
 		a.processEntries(entryChan, errChan)
 	}()
 
@@ -178,8 +121,6 @@ func (a *Analyzer) Start(ctx context.Context) error {
 	return nil
 }
 
-// processEntries reads from input channels and submits to worker pool.
-// Runs in a dedicated goroutine until context cancellation or channel close.
 func (a *Analyzer) processEntries(entryChan <-chan *domain.LogEntry, errChan <-chan error) {
 	for {
 		select {
@@ -190,20 +131,51 @@ func (a *Analyzer) processEntries(entryChan <-chan *domain.LogEntry, errChan <-c
 				continue
 			}
 			log.Error().Err(err).Msg("Error reading log")
+			a.notifyProcessingResult("parse_error")
+			a.notifyParseError(err)
 		case entry, ok := <-entryChan:
 			if !ok {
 				log.Info().Msg("Entry channel closed")
+				if a.ctx.Err() == nil && !a.readerExpectedEOF() {
+					a.finish(fmt.Errorf("log reader stopped unexpectedly"))
+				}
 				return
 			}
-			if !a.workerPool.SubmitBlocking(a.ctx, entry) {
+			if !a.workerPool.Submit(entry) {
 				log.Warn().Msg("Failed to submit entry to worker pool")
 			}
 		}
 	}
 }
 
-// updateMetrics periodically calculates LPS and updates memory metrics.
-// Runs in a dedicated goroutine until context cancellation.
+func (a *Analyzer) notifyParseError(err error) {
+	a.mu.RLock()
+	observers := append([]ports.ProcessingObserver(nil), a.observers...)
+	a.mu.RUnlock()
+	for _, obs := range observers {
+		if detailed, ok := obs.(ports.DetailedProcessingObserver); ok {
+			detailed.IncrementParseErrors()
+			if err != nil {
+				detailed.IncrementParseErrorByReason(err.Error())
+			}
+		}
+	}
+}
+
+func (a *Analyzer) notifyProcessingResult(result string) {
+	a.mu.RLock()
+	observers := append([]ports.ProcessingObserver(nil), a.observers...)
+	a.mu.RUnlock()
+	for _, obs := range observers {
+		obs.IncrementLinesProcessedByResult(result)
+	}
+}
+
+func (a *Analyzer) readerExpectedEOF() bool {
+	reader, ok := a.reader.(expectedEOFReader)
+	return ok && reader.ExpectedEOF()
+}
+
 func (a *Analyzer) updateMetrics() {
 	ticker := time.NewTicker(1 * time.Second)
 	memTicker := time.NewTicker(5 * time.Second)
@@ -232,15 +204,6 @@ func (a *Analyzer) updateMetrics() {
 	}
 }
 
-// Stop initiates graceful shutdown of the analyzer.
-//
-// Behavior:
-//   - Triggers context cancellation
-//   - Stops log reader
-//   - Drains and stops worker pool
-//   - Waits for goroutine completion
-//
-// Thread Safety: Safe to call multiple times (idempotent).
 func (a *Analyzer) Stop() {
 	a.mu.Lock()
 	if !a.running {
@@ -266,31 +229,52 @@ func (a *Analyzer) Stop() {
 	log.Info().Msg("Analyzer stopped")
 }
 
-// Metrics returns a point-in-time snapshot of runtime metrics.
-//
-// Returns:
-//   - MetricsSnapshot with throughput, alert counts, memory usage
-//
-// Thread Safety: Safe to call from any goroutine.
+func (a *Analyzer) finish(err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil && a.err == nil {
+		a.err = err
+	}
+	if err != nil && a.cancel != nil {
+		a.cancel()
+	}
+	select {
+	case <-a.done:
+	default:
+		close(a.done)
+	}
+}
+
 func (a *Analyzer) Metrics() domain.MetricsSnapshot {
 	return a.metrics.GetSnapshot()
 }
 
-// InternalMetrics returns the raw metrics collector for Prometheus integration.
-// Use Metrics() for point-in-time snapshots in application code.
 func (a *Analyzer) InternalMetrics() *domain.AnalysisMetrics {
 	return a.metrics
 }
 
-// IsRunning returns true if the analyzer is currently processing logs.
+func (a *Analyzer) QueueStats() (int, int) {
+	return a.workerPool.QueueLength(), a.workerPool.QueueCapacity()
+}
+
 func (a *Analyzer) IsRunning() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.running
 }
 
-// WaitForSignal blocks until SIGINT or SIGTERM is received, then stops.
-// Typically used in console mode without TUI.
+func (a *Analyzer) Done() <-chan struct{} {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.done
+}
+
+func (a *Analyzer) Err() error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.err
+}
+
 func (a *Analyzer) WaitForSignal() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -301,20 +285,25 @@ func (a *Analyzer) WaitForSignal() {
 	a.Stop()
 }
 
-// Run starts the analyzer and blocks until shutdown signal.
-// Convenience method combining Start() and WaitForSignal().
-//
-// Parameters:
-//   - ctx: Context for lifecycle management
-//
-// Returns:
-//   - Error from Start() if startup fails
-//   - nil on clean shutdown
 func (a *Analyzer) Run(ctx context.Context) error {
 	if err := a.Start(ctx); err != nil {
 		return err
 	}
 
-	a.WaitForSignal()
-	return nil
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
+	select {
+	case sig := <-sigChan:
+		log.Info().Str("signal", sig.String()).Msg("Received shutdown signal")
+		a.Stop()
+		return nil
+	case <-a.Done():
+		a.Stop()
+		return a.Err()
+	case <-ctx.Done():
+		a.Stop()
+		return ctx.Err()
+	}
 }

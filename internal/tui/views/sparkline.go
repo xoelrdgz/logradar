@@ -8,11 +8,11 @@ import (
 )
 
 var (
-	sparkColorPrimary = lipgloss.Color("#00ff41")
-	sparkColorAmber   = lipgloss.Color("#ffb000")
-	sparkColorRed     = lipgloss.Color("#ff3333")
-	sparkColorDim     = lipgloss.Color("#404040")
-	sparkColorGhost   = lipgloss.Color("#252525")
+	sparkColorPrimary = lipgloss.Color("#8df7b2")
+	sparkColorAmber   = lipgloss.Color("#f2c36b")
+	sparkColorRed     = lipgloss.Color("#ff6b5f")
+	sparkColorDim     = lipgloss.Color("#46524d")
+	sparkColorGhost   = lipgloss.Color("#202724")
 )
 
 var signalChars = []rune{'⎽', '⎼', '─', '⎻', '⎺'}

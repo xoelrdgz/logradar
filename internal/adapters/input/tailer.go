@@ -1,19 +1,8 @@
-// Package input provides file tailing for LogRadar.
-//
-// FileTailer implements real-time log file tailing using nxadm/tail.
-// Supports reading from end of file (default) or beginning for replay.
-//
-// Features:
-//   - Real-time following with inotify (Linux) or polling (other OS)
-//   - Automatic file reopening on rotation
-//   - Line truncation for oversized entries (DoS protection)
-//   - Graceful shutdown with context cancellation
-//
-// Thread Safety: Safe for concurrent Start/Stop calls via mutex protection.
 package input
 
 import (
 	"context"
+	"io"
 	"sync"
 
 	"github.com/nxadm/tail"
@@ -23,34 +12,23 @@ import (
 	"github.com/xoelrdgz/logradar/internal/ports"
 )
 
-// FileTailer implements ports.LogReader for file-based log sources.
-//
-// Wraps the nxadm/tail library to provide:
-//   - Real-time log following
-//   - Log rotation handling
-//   - Integration with LogRadar's parser interface
 type FileTailer struct {
-	filepath      string          // Path to log file
-	parser        ports.LogParser // Parser for log format
-	tail          *tail.Tail      // Underlying tail implementation
-	bufferSize    int             // Output channel buffer size
-	fromBeginning bool            // Start from beginning vs end
-	mu            sync.Mutex      // Protects running state
-	running       bool            // Active tailing flag
-	stopChan      chan struct{}   // Shutdown signal
+	filepath      string
+	parser        ports.LogParser
+	tail          *tail.Tail
+	bufferSize    int
+	fromBeginning bool
+	checkpoint    CheckpointConfig
+	mu            sync.Mutex
+	running       bool
+	stopChan      chan struct{}
 }
 
-// NewFileTailer creates a file tailer starting from end of file.
-//
-// Parameters:
-//   - filepath: Path to log file to tail
-//   - parser: Parser for the log format (CLF, JSON, or Auto)
-//   - bufferSize: Output channel buffer (default: 1000 if <= 0)
-//
-// Returns:
-//   - Configured FileTailer ready for Start()
-//
-// Note: Starts from end of file. Use NewFileTailerFull for beginning.
+type CheckpointConfig struct {
+	Enabled bool
+	Path    string
+}
+
 func NewFileTailer(filepath string, parser ports.LogParser, bufferSize int) *FileTailer {
 	if bufferSize <= 0 {
 		bufferSize = 1000
@@ -64,52 +42,20 @@ func NewFileTailer(filepath string, parser ports.LogParser, bufferSize int) *Fil
 	}
 }
 
-// NewFileTailerFull creates a file tailer starting from beginning of file.
-//
-// Parameters:
-//   - filepath: Path to log file to tail
-//   - parser: Parser for the log format
-//   - bufferSize: Output channel buffer
-//
-// Returns:
-//   - Configured FileTailer that reads entire file history
-//
-// Use Case: Historical log analysis or replay scenarios.
 func NewFileTailerFull(filepath string, parser ports.LogParser, bufferSize int) *FileTailer {
 	t := NewFileTailer(filepath, parser, bufferSize)
 	t.fromBeginning = true
 	return t
 }
 
-// SetFromBeginning configures whether to start from file beginning.
-//
-// Parameters:
-//   - fromBeginning: true to read from start, false for end
-//
-// Note: Must be called before Start().
 func (t *FileTailer) SetFromBeginning(fromBeginning bool) {
 	t.fromBeginning = fromBeginning
 }
 
-// Start begins tailing the log file and returns output channels.
-//
-// Parameters:
-//   - ctx: Context for lifecycle management
-//
-// Returns:
-//   - Entry channel: Parsed log entries (closed on stop)
-//   - Error channel: Parse and I/O errors (closed on stop)
-//
-// Behavior:
-//   - Spawns background goroutine for tailing
-//   - Truncates lines exceeding MaxLineLength (DoS protection)
-//   - Continues on parse errors (logs debug message)
-//   - Idempotent: returns closed channels if already running
-//
-// Stop Conditions:
-//   - Context cancellation
-//   - Stop() called
-//   - File descriptor error
+func (t *FileTailer) SetCheckpoint(config CheckpointConfig) {
+	t.checkpoint = config
+}
+
 func (t *FileTailer) Start(ctx context.Context) (<-chan *domain.LogEntry, <-chan error) {
 	entryChan := make(chan *domain.LogEntry, t.bufferSize)
 	errChan := make(chan error, 10)
@@ -128,18 +74,29 @@ func (t *FileTailer) Start(ctx context.Context) (<-chan *domain.LogEntry, <-chan
 		defer close(entryChan)
 		defer close(errChan)
 
-		// Configure seek position
-		whence := 2 // End of file
+		location := &tail.SeekInfo{Offset: 0, Whence: io.SeekEnd}
 		if t.fromBeginning {
-			whence = 0 // Beginning of file
+			location = &tail.SeekInfo{Offset: 0, Whence: io.SeekStart}
+		} else if t.checkpoint.Enabled && t.checkpoint.Path != "" {
+			state, err := loadCheckpoint(t.checkpoint.Path)
+			if err != nil {
+				log.Warn().Err(err).Str("path", t.checkpoint.Path).Msg("Failed to load tailer checkpoint")
+			} else if offset, ok := checkpointOffsetForFile(t.filepath, state); ok {
+				location = &tail.SeekInfo{Offset: offset, Whence: io.SeekStart}
+				log.Info().
+					Str("file", t.filepath).
+					Str("checkpoint", t.checkpoint.Path).
+					Int64("offset", offset).
+					Msg("Resuming log tailer from checkpoint")
+			}
 		}
 
 		config := tail.Config{
-			Follow:    true,  // Follow file changes
-			ReOpen:    true,  // Reopen on rotation
-			MustExist: false, // Create if not exists
-			Poll:      false, // Use inotify when available
-			Location:  &tail.SeekInfo{Offset: 0, Whence: whence},
+			Follow:    true,
+			ReOpen:    true,
+			MustExist: false,
+			Poll:      false,
+			Location:  location,
 		}
 
 		var err error
@@ -174,7 +131,6 @@ func (t *FileTailer) Start(ctx context.Context) (<-chan *domain.LogEntry, <-chan
 					continue
 				}
 
-				// Truncate oversized lines (DoS protection)
 				lineText := line.Text
 				wasTruncated := false
 				if len(lineText) > domain.MaxLineLength {
@@ -186,7 +142,6 @@ func (t *FileTailer) Start(ctx context.Context) (<-chan *domain.LogEntry, <-chan
 						Msg("Truncated oversized log entry (potential DoS payload)")
 				}
 
-				// Parse the line
 				entry, err := t.parser.Parse(lineText)
 				if err != nil {
 					log.Debug().Err(err).Str("line", lineText).Msg("Failed to parse log line")
@@ -197,9 +152,9 @@ func (t *FileTailer) Start(ctx context.Context) (<-chan *domain.LogEntry, <-chan
 					entry.Truncated = true
 				}
 
-				// Send to output channel
 				select {
 				case entryChan <- entry:
+					t.saveCheckpoint(line.SeekInfo.Offset, lineText)
 				case <-ctx.Done():
 					return
 				case <-t.stopChan:
@@ -212,13 +167,22 @@ func (t *FileTailer) Start(ctx context.Context) (<-chan *domain.LogEntry, <-chan
 	return entryChan, errChan
 }
 
-// Stop terminates log tailing and closes output channels.
-//
-// Returns:
-//   - nil on success
-//   - Error from underlying tail library if cleanup fails
-//
-// Thread Safety: Safe to call concurrently or multiple times (idempotent).
+func (t *FileTailer) saveCheckpoint(lineOffset int64, lineText string) {
+	if !t.checkpoint.Enabled || t.checkpoint.Path == "" || lineOffset < 0 {
+		return
+	}
+
+	nextOffset := lineOffset + int64(len(lineText)) + 1
+	state, err := checkpointForFile(t.filepath, nextOffset)
+	if err != nil {
+		log.Debug().Err(err).Str("file", t.filepath).Msg("Unable to build tailer checkpoint")
+		return
+	}
+	if err := saveCheckpoint(t.checkpoint.Path, state); err != nil {
+		log.Warn().Err(err).Str("path", t.checkpoint.Path).Msg("Failed to save tailer checkpoint")
+	}
+}
+
 func (t *FileTailer) Stop() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -236,7 +200,6 @@ func (t *FileTailer) Stop() error {
 	return nil
 }
 
-// IsRunning returns true if the tailer is actively reading.
 func (t *FileTailer) IsRunning() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()

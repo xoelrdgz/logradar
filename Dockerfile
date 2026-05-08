@@ -1,6 +1,5 @@
-# syntax=docker/dockerfile:1.4
 
-FROM golang:1.26-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates tzdata
 
@@ -40,12 +39,11 @@ LABEL org.opencontainers.image.title="LogRadar" \
     org.opencontainers.image.revision="${COMMIT}" \
     org.opencontainers.image.vendor="LogRadar" \
     org.opencontainers.image.source="https://github.com/xoelrdgz/logradar" \
-    org.opencontainers.image.licenses="MIT"
+    org.opencontainers.image.licenses="GPL-3.0-only"
 
 COPY --from=builder /build/logradar /logradar
 COPY --from=builder /build/configs/config.yaml /etc/logradar/config.yaml
 COPY --from=builder /build/configs/config.production.yaml /etc/logradar/config.production.yaml
-COPY --from=builder /build/testdata/malicious_ips.txt /etc/logradar/malicious_ips.txt
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
 VOLUME ["/var/log/logradar", "/logs"]

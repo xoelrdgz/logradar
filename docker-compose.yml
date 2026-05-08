@@ -13,30 +13,36 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
+          cpus: "4"
           memory: 512M
         reservations:
-          cpus: '2'
+          cpus: "2"
           memory: 256M
 
     security_opt:
       - no-new-privileges:true
     read_only: true
 
+    profiles: ["file"]
+
     volumes:
-      - ./testdata:/data:ro
       - ./configs:/etc/logradar:ro
       - ./output:/output
+      - ${LOGRADAR_LOG_FILE:-./access.log}:/logs/access.log:ro
 
     environment:
-      - LOGRADAR_LOG_PATH=/data/sample.log
+      - LOGRADAR_LOG_PATH=/logs/access.log
+      - LOGRADAR_LOG_FORMAT=${LOGRADAR_LOG_FORMAT:-combined}
+      - LOGRADAR_THREAT_INTEL_ENABLED=false
+      - LOGRADAR_OUTPUT_JSON_PATH=/output/alerts.json
+      - LOGRADAR_OUTPUT_JSON_ENABLED=true
       - LOGRADAR_WORKERS_COUNT=16
       - GOMAXPROCS=4
 
     ports:
       - "9190:9090"
 
-    command: [ "analyze", "--log", "/data/sample.log", "--no-tui", "--workers", "16" ]
+    command: ["analyze", "--config", "/etc/logradar/config.yaml", "--no-tui"]
 
     healthcheck:
       test: ["CMD", "/logradar", "version"]
@@ -50,12 +56,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: logradar-demo
-    profiles: [ "demo" ]
+    profiles: ["demo"]
 
     deploy:
       resources:
         limits:
-          cpus: '12'
+          cpus: "12"
           memory: 2G
 
     environment:
@@ -64,13 +70,22 @@ services:
     ports:
       - "9091:9090"
 
-    command: [ "analyze", "--demo", "--demo-rate", "1000", "--workers", "32", "--no-tui" ]
+    command:
+      [
+        "analyze",
+        "--demo",
+        "--demo-rate",
+        "185000",
+        "--workers",
+        "12",
+        "--no-tui",
+      ]
   logradar-tui:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: logradar-tui
-    profiles: [ "tui" ]
+    profiles: ["tui"]
 
     stdin_open: true
     tty: true
@@ -78,11 +93,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '12'
+          cpus: "12"
           memory: 2G
 
     volumes:
-      - ./testdata:/data:ro
       - ./configs:/etc/logradar:ro
       - ./output:/output
 
@@ -90,12 +104,12 @@ services:
       - GOMAXPROCS=12
       - TERM=xterm-256color
 
-    command: [ "analyze", "--demo", "--demo-rate", "100000", "--workers", "16" ]
+    command: ["analyze", "--demo", "--demo-rate", "100000", "--workers", "16"]
 
   prometheus:
     image: prom/prometheus:v2.48.0
     container_name: logradar-prometheus
-    profiles: [ "monitoring" ]
+    profiles: ["monitoring"]
     restart: unless-stopped
 
     volumes:
@@ -107,35 +121,10 @@ services:
       - "9093:9090"
 
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=7d'
-      - '--web.enable-lifecycle'
-
-  grafana:
-    image: grafana/grafana:10.2.2
-    container_name: logradar-grafana
-    profiles: [ "monitoring" ]
-    restart: unless-stopped
-
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_AUTH_ANONYMOUS_ENABLED=false
-      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/logradar.json
-
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./configs/grafana-dashboard.json:/var/lib/grafana/dashboards/logradar.json:ro
-      - ./configs/grafana/provisioning:/etc/grafana/provisioning:ro
-
-    ports:
-      - "3000:3000"
-
-    depends_on:
-      - prometheus
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
 
 volumes:
   prometheus_data:
-  grafana_data:

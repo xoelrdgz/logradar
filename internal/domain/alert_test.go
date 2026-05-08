@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,6 +22,13 @@ func TestNewAlert(t *testing.T) {
 	assert.Equal(t, 9, alert.RiskScore)
 	assert.Equal(t, "SQL Injection detected", alert.Message)
 	assert.NotNil(t, alert.Metadata)
+}
+
+func TestNewAlertTruncatesRawLog(t *testing.T) {
+	rawLog := strings.Repeat("x", MaxLineLength+100)
+	alert := NewAlert(netip.MustParseAddr("192.0.2.10"), ThreatTypeXSS, AlertLevelWarning, rawLog, 5, "test")
+
+	assert.Len(t, alert.RawLog, MaxLineLength)
 }
 
 func TestAlertRiskScoreClamping(t *testing.T) {
@@ -77,6 +85,25 @@ func TestAlertAddMetadata(t *testing.T) {
 
 	assert.Equal(t, "abuse_ipdb", alert.Metadata["source"])
 	assert.Equal(t, "0.95", alert.Metadata["confidence"])
+}
+
+func TestAlertApplyDetectionResult(t *testing.T) {
+	alert := NewAlert(netip.MustParseAddr("192.0.2.10"), ThreatTypeSQLInjection, AlertLevelCritical, "raw", 9, "test")
+	alert.ApplyDetectionResult(DetectionResult{
+		RuleID:      "signature.sqli.union",
+		RuleVersion: "1",
+		Confidence:  2,
+		Evidence: Evidence{
+			Field:    "path",
+			Fragment: strings.Repeat("x", 300),
+		},
+	})
+
+	assert.Equal(t, "signature.sqli.union", alert.RuleID)
+	assert.Equal(t, "1", alert.RuleVersion)
+	assert.Equal(t, 1.0, alert.Confidence)
+	assert.Equal(t, "path", alert.Evidence.Field)
+	assert.Len(t, alert.Evidence.Fragment, 256)
 }
 
 func TestAlertLevelColor(t *testing.T) {

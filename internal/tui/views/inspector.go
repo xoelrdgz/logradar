@@ -11,14 +11,14 @@ import (
 )
 
 var (
-	inspColorPrimary = lipgloss.Color("#00ff41")
-	inspColorAmber   = lipgloss.Color("#ffb000")
-	inspColorRed     = lipgloss.Color("#ff3333")
-	inspColorCyan    = lipgloss.Color("#00b8ff")
-	inspColorText    = lipgloss.Color("#e5e5e5")
-	inspColorDim     = lipgloss.Color("#404040")
-	inspColorBorder  = lipgloss.Color("#00ff41")
-	inspColorBg      = lipgloss.Color("#0a1f0a")
+	inspColorPrimary = lipgloss.Color("#8df7b2")
+	inspColorAmber   = lipgloss.Color("#f2c36b")
+	inspColorRed     = lipgloss.Color("#ff6b5f")
+	inspColorCyan    = lipgloss.Color("#76c7e8")
+	inspColorText    = lipgloss.Color("#dbe6df")
+	inspColorDim     = lipgloss.Color("#46524d")
+	inspColorBorder  = lipgloss.Color("#26322d")
+	inspColorBg      = lipgloss.Color("#14251d")
 )
 
 func forLevel(level string) lipgloss.Style {
@@ -100,7 +100,7 @@ func (p *PayloadInspector) Render() string {
 
 	var lines []string
 
-	title := "╔═══ PAYLOAD INSPECTOR ═══╗"
+	title := "PAYLOAD INSPECTOR"
 	lines = append(lines, header.Render(title))
 	lines = append(lines, dimText.Render(strings.Repeat("─", contentWidth)))
 

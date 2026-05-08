@@ -90,17 +90,17 @@ func (a *AlertList) SelectLast() {
 }
 
 func (a *AlertList) Render() string {
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("#404040"))
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#707070"))
-	text := lipgloss.NewStyle().Foreground(lipgloss.Color("#e5e5e5"))
-	green := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff41"))
-	amber := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffb000"))
-	red := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff3333"))
-	cyan := lipgloss.NewStyle().Foreground(lipgloss.Color("#00b8ff"))
-	selected := lipgloss.NewStyle().Background(lipgloss.Color("#003300")).Foreground(lipgloss.Color("#00ff41"))
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("#46524d"))
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#82908a"))
+	text := lipgloss.NewStyle().Foreground(lipgloss.Color("#dbe6df"))
+	green := lipgloss.NewStyle().Foreground(lipgloss.Color("#8df7b2"))
+	amber := lipgloss.NewStyle().Foreground(lipgloss.Color("#f2c36b"))
+	red := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff6b5f"))
+	cyan := lipgloss.NewStyle().Foreground(lipgloss.Color("#76c7e8"))
+	selected := lipgloss.NewStyle().Background(lipgloss.Color("#1e382b")).Foreground(lipgloss.Color("#d5ffe3"))
 
 	if len(a.Alerts) == 0 {
-		return dim.Italic(true).Render("  No alerts")
+		return dim.Render("  No alerts in current filter")
 	}
 
 	if a.SelectedIndex < 0 && len(a.Alerts) > 0 {
@@ -109,10 +109,10 @@ func (a *AlertList) Render() string {
 
 	var lines []string
 
-	lines = append(lines, muted.Bold(true).Render(
-		fmt.Sprintf("  %-8s  %-3s  %-15s  %-14s  %-3s  %s",
-			"TIME", "LVL", "IP", "TYPE", "RSK", "MESSAGE")))
-	lines = append(lines, dim.Render("  "+strings.Repeat("─", a.Width-4)))
+	header := fmt.Sprintf("  %-8s  %-3s  %-15s  %-15s  %-4s  %-10s  %s",
+		"TIME", "LVL", "IP", "TYPE", "RISK", "RULE", "MESSAGE")
+	lines = append(lines, muted.Bold(true).Render(header))
+	lines = append(lines, dim.Render("  "+strings.Repeat("·", max(1, a.Width-4))))
 
 	startIdx := 0
 	endIdx := len(a.Alerts)
@@ -163,9 +163,10 @@ func (a *AlertList) Render() string {
 			ipStyle = selected.Bold(true)
 		}
 
-		threatType := sanitize.SanitizeForTerminal(string(al.ThreatType))
-		if len(threatType) > 14 {
-			threatType = threatType[:11] + "..."
+		threatType := compact(sanitize.SanitizeForTerminal(string(al.ThreatType)), 15)
+		ruleID := compact(sanitize.SanitizeForTerminal(al.RuleID), 10)
+		if ruleID == "" {
+			ruleID = "-"
 		}
 		riskStyle := green
 		if al.RiskScore >= 8 {
@@ -175,7 +176,7 @@ func (a *AlertList) Render() string {
 		}
 
 		msg := sanitize.SanitizeForTerminal(al.Message)
-		maxLen := a.Width - 55
+		maxLen := a.Width - 74
 		if maxLen < 10 {
 			maxLen = 10
 		}
@@ -183,13 +184,14 @@ func (a *AlertList) Render() string {
 			msg = msg[:maxLen-3] + "..."
 		}
 
-		line := fmt.Sprintf("%s%-8s  %s  %-15s  %-14s  %s   %s",
+		line := fmt.Sprintf("%s%-8s  %s  %-15s  %-15s  %s  %-10s  %s",
 			prefix,
 			timeStr,
 			lvlStyle.Render(lvl),
 			ipStyle.Render(fmt.Sprintf("%-15s", ip)),
-			green.Render(fmt.Sprintf("%-14s", threatType)),
+			green.Render(fmt.Sprintf("%-15s", threatType)),
 			riskStyle.Render(fmt.Sprintf("%2d", al.RiskScore)),
+			muted.Render(fmt.Sprintf("%-10s", ruleID)),
 			muted.Render(msg),
 		)
 		lines = append(lines, line)
@@ -201,4 +203,21 @@ func (a *AlertList) Render() string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func compact(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	if n <= 3 {
+		return s[:n]
+	}
+	return s[:n-3] + "..."
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

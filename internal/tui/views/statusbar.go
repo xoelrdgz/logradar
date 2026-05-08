@@ -13,6 +13,7 @@ type Status struct {
 	Metrics    domain.MetricsSnapshot
 	StartTime  time.Time
 	lastUpdate time.Time
+	Dropped    int64
 }
 
 func NewStatus(width int) *Status {
@@ -25,12 +26,12 @@ func (s *Status) Update(metrics domain.MetricsSnapshot) {
 }
 
 func (s *Status) Render() string {
-	green := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff41"))
-	greenDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#00aa2a"))
-	amber := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffb000"))
-	red := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff3333"))
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#707070"))
-	border := lipgloss.NewStyle().Foreground(lipgloss.Color("#2a2a2a"))
+	green := lipgloss.NewStyle().Foreground(lipgloss.Color("#8df7b2"))
+	greenDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#4da873"))
+	amber := lipgloss.NewStyle().Foreground(lipgloss.Color("#f2c36b"))
+	red := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff6b5f"))
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#82908a"))
+	border := lipgloss.NewStyle().Foreground(lipgloss.Color("#26322d"))
 
 	hb := s.heartbeat(green, greenDim, amber, red)
 
@@ -69,6 +70,7 @@ func (s *Status) Render() string {
 		muted.Render("PROC:") + " " + green.Render(fmtLarge(s.Metrics.TotalLinesProcessed)),
 		muted.Render("HITS:") + " " + mal.Render(fmtLarge(s.Metrics.MaliciousLines)),
 		muted.Render("ALRT:") + " " + alrt.Render(fmtLarge(s.Metrics.TotalAlerts)),
+		muted.Render("DROP:") + " " + amber.Render(fmtLarge(s.Dropped)),
 		muted.Render("MEM:") + " " + mem.Render(fmt.Sprintf("%.0fM", s.Metrics.MemoryUsageMB)),
 		muted.Render("UP:") + " " + green.Render(fmtUptime(uptime)),
 	}
@@ -84,7 +86,7 @@ func (s *Status) Render() string {
 	return lipgloss.NewStyle().
 		Width(s.Width).
 		Padding(0, 1).
-		Background(lipgloss.Color("#0a0a0a")).
+		Background(lipgloss.Color("#111614")).
 		Render(line)
 }
 
@@ -104,7 +106,7 @@ func (s *Status) heartbeat(active, dim, warn, crit lipgloss.Style) string {
 		icon, style = "○", crit
 	}
 
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("#707070")).Render("SYS:") + " " + style.Render(icon)
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#82908a")).Render("SYS") + " " + style.Render(icon)
 }
 
 func fmtLarge(n int64) string {

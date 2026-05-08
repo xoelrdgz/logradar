@@ -13,6 +13,7 @@ import (
 
 type mockDetector struct {
 	shouldDetect bool
+	audit        bool
 	shouldPanic  bool
 	detectCount  atomic.Int64
 }
@@ -29,6 +30,7 @@ func (m *mockDetector) Detect(ctx context.Context, entry *domain.LogEntry) domai
 			Level:      domain.AlertLevelCritical,
 			RiskScore:  9,
 			Message:    "Test detection",
+			Audit:      m.audit,
 		}
 	}
 	return domain.NoDetection()
@@ -48,6 +50,37 @@ func (m *mockAlerter) Send(ctx context.Context, alert *domain.Alert) error {
 
 func (m *mockAlerter) Flush() error { return nil }
 func (m *mockAlerter) Close() error { return nil }
+
+func TestWorkerPool_AuditDetectionsDoNotEmitAlerts(t *testing.T) {
+	metrics := domain.NewAnalysisMetrics()
+	detector := &mockDetector{shouldDetect: true, audit: true}
+	alerter := &mockAlerter{}
+
+	config := WorkerPoolConfig{
+		WorkerCount: 1,
+		BufferSize:  10,
+	}
+
+	pool := NewWorkerPool(config, []ports.ThreatDetector{detector}, []ports.Alerter{alerter}, metrics)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pool.Start(ctx)
+	entry := domain.AcquireLogEntry()
+	entry.Path = "/audit"
+	if !pool.SubmitBlocking(ctx, entry) {
+		t.Fatal("Failed to submit entry")
+	}
+	time.Sleep(100 * time.Millisecond)
+	pool.Stop()
+
+	if alerter.alertCount.Load() != 0 {
+		t.Fatalf("alertCount = %d, want 0 for audit detection", alerter.alertCount.Load())
+	}
+	if metrics.GetSnapshot().TotalAlerts != 0 {
+		t.Fatalf("TotalAlerts = %d, want 0 for audit detection", metrics.GetSnapshot().TotalAlerts)
+	}
+}
 
 func TestWorkerPool_Basic(t *testing.T) {
 	metrics := domain.NewAnalysisMetrics()
@@ -281,7 +314,6 @@ func TestWorkerPool_ProcessingObserver(t *testing.T) {
 	alerter := &mockAlerter{}
 	observer := &mockObserver{}
 
-	// Create a detector that we can toggle for the second phase
 	maliciousDetector := &mockDetector{shouldDetect: true}
 
 	config := WorkerPoolConfig{
@@ -289,7 +321,6 @@ func TestWorkerPool_ProcessingObserver(t *testing.T) {
 		BufferSize:  100,
 	}
 
-	// Phase 1: Clean lines
 	pool := NewWorkerPool(config, []ports.ThreatDetector{detector}, []ports.Alerter{alerter}, metrics)
 	pool.AddObserver(observer)
 
@@ -304,7 +335,6 @@ func TestWorkerPool_ProcessingObserver(t *testing.T) {
 		pool.SubmitBlocking(ctx, entry)
 	}
 
-	// Give workers time to process
 	time.Sleep(100 * time.Millisecond)
 
 	pool.Stop()
@@ -316,8 +346,6 @@ func TestWorkerPool_ProcessingObserver(t *testing.T) {
 		t.Errorf("Expected 0 malicious lines, got %d", observer.maliciousCount.Load())
 	}
 
-	// Phase 2: Malicious lines
-	// Need new pool because Stop() closes channels
 	pool2 := NewWorkerPool(config, []ports.ThreatDetector{maliciousDetector}, []ports.Alerter{alerter}, metrics)
 	pool2.AddObserver(observer)
 
@@ -335,7 +363,7 @@ func TestWorkerPool_ProcessingObserver(t *testing.T) {
 	if observer.maliciousCount.Load() != 5 {
 		t.Errorf("Expected 5 malicious lines, got %d", observer.maliciousCount.Load())
 	}
-	// Clean count should stay same (10)
+
 	if observer.cleanCount.Load() != 10 {
 		t.Errorf("Expected 10 clean lines total, got %d", observer.cleanCount.Load())
 	}

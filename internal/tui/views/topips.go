@@ -30,16 +30,16 @@ func NewTopIPs(width int) *TopIPs {
 func (v *TopIPs) Update(ips []*IPEntry) { v.IPs = ips }
 
 func (v *TopIPs) Render() string {
-	green := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff41"))
-	greenDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#00aa2a"))
-	amber := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffb000"))
-	red := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff3333"))
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("#404040"))
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#707070"))
-	text := lipgloss.NewStyle().Foreground(lipgloss.Color("#e5e5e5"))
+	green := lipgloss.NewStyle().Foreground(lipgloss.Color("#8df7b2"))
+	greenDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#4da873"))
+	amber := lipgloss.NewStyle().Foreground(lipgloss.Color("#f2c36b"))
+	red := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff6b5f"))
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("#46524d"))
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#82908a"))
+	text := lipgloss.NewStyle().Foreground(lipgloss.Color("#dbe6df"))
 
 	if len(v.IPs) == 0 {
-		return dim.Italic(true).Render("  No threats detected")
+		return dim.Render("  No source IPs in current window")
 	}
 
 	var lines []string
@@ -75,7 +75,7 @@ func (v *TopIPs) Render() string {
 			ipStyle = green
 		}
 
-		barWidth := 6
+		barWidth := 8
 		fillWidth := 0
 		if maxAlerts > 0 {
 			fillWidth = int(float64(ip.AlertCount) / float64(maxAlerts) * float64(barWidth))
@@ -83,7 +83,7 @@ func (v *TopIPs) Render() string {
 		if fillWidth > barWidth {
 			fillWidth = barWidth
 		}
-		bar := strings.Repeat("█", fillWidth) + strings.Repeat("░", barWidth-fillWidth)
+		bar := strings.Repeat("▰", fillWidth) + strings.Repeat("▱", barWidth-fillWidth)
 		hitsStr := fmtLarge(int64(ip.AlertCount))
 		hits := ipStyle.Render(fmt.Sprintf("%s %5s", bar, hitsStr))
 

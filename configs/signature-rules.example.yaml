@@ -1,0 +1,14 @@
+version: "1"
+rules:
+  - id: example-rce
+    version: "1"
+    name: Example RCE Marker
+    pattern: "(?i)example_exec"
+    threat_type: RCE
+    level: CRITICAL
+    risk_score: 10
+    confidence: 0.95
+    audit: false
+    keywords:
+      - example_exec
+    requires_query_string: false

@@ -153,6 +153,44 @@ func TestSanitizeJSON(t *testing.T) {
 	}
 }
 
+func TestRedactSensitive(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "query credentials",
+			input:    "GET /login?user=admin&password=s3cr3t&token=abc123 HTTP/1.1",
+			expected: "GET /login?user=admin&password=[REDACTED]&token=[REDACTED] HTTP/1.1",
+		},
+		{
+			name:     "authorization header",
+			input:    "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9",
+			expected: "Authorization: Bearer [REDACTED]",
+		},
+		{
+			name:     "cookie session",
+			input:    "Cookie: theme=light; session=abcdef; path=/",
+			expected: "Cookie: theme=light; session=[REDACTED]; path=/",
+		},
+		{
+			name:     "clean value",
+			input:    "GET /health HTTP/1.1",
+			expected: "GET /health HTTP/1.1",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := RedactSensitive(tc.input)
+			if result != tc.expected {
+				t.Errorf("RedactSensitive(%q) = %q, want %q", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
+
 func TestSanitizeIP(t *testing.T) {
 	tests := []struct {
 		name     string

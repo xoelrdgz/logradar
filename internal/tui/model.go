@@ -2,6 +2,7 @@ package tui
 
 import (
 	"container/heap"
+	"strings"
 	"sync"
 
 	"github.com/xoelrdgz/logradar/internal/domain"
@@ -31,6 +32,13 @@ type Model struct {
 	mu         sync.RWMutex
 	alertCount int
 	running    bool
+
+	Paused         bool
+	FilterSeverity domain.AlertLevel
+	FilterType     domain.ThreatType
+	FilterIP       string
+	FilterRuleID   string
+	SearchQuery    string
 }
 
 type IPEntry struct {
@@ -179,9 +187,39 @@ func (m *Model) GetAlerts() []*domain.Alert {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	result := make([]*domain.Alert, len(m.Alerts))
-	copy(result, m.Alerts)
+	result := make([]*domain.Alert, 0, len(m.Alerts))
+	for _, alert := range m.Alerts {
+		if m.matchesFilters(alert) {
+			result = append(result, alert)
+		}
+	}
 	return result
+}
+
+func (m *Model) matchesFilters(alert *domain.Alert) bool {
+	if alert == nil {
+		return false
+	}
+	if m.FilterSeverity != "" && alert.Level != m.FilterSeverity {
+		return false
+	}
+	if m.FilterType != "" && alert.ThreatType != m.FilterType {
+		return false
+	}
+	if m.FilterIP != "" && alert.IPString() != m.FilterIP {
+		return false
+	}
+	if m.FilterRuleID != "" && alert.RuleID != m.FilterRuleID {
+		return false
+	}
+	if m.SearchQuery != "" {
+		q := strings.ToLower(m.SearchQuery)
+		haystack := strings.ToLower(alert.Message + " " + alert.RawLog + " " + string(alert.ThreatType) + " " + alert.RuleID)
+		if !strings.Contains(haystack, q) {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Model) GetTopIPs() []*IPEntry {
@@ -248,4 +286,69 @@ func (m *Model) ScrollUp() {
 
 func (m *Model) ScrollDown() {
 	m.ScrollPos++
+}
+
+func (m *Model) TogglePause() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Paused = !m.Paused
+}
+
+func (m *Model) SetSearch(query string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.SearchQuery = query
+}
+
+func (m *Model) CycleSeverityFilter() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	switch m.FilterSeverity {
+	case "":
+		m.FilterSeverity = domain.AlertLevelCritical
+	case domain.AlertLevelCritical:
+		m.FilterSeverity = domain.AlertLevelWarning
+	case domain.AlertLevelWarning:
+		m.FilterSeverity = domain.AlertLevelInfo
+	default:
+		m.FilterSeverity = ""
+	}
+}
+
+func (m *Model) ClearFilters() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.FilterSeverity = ""
+	m.FilterType = ""
+	m.FilterIP = ""
+	m.FilterRuleID = ""
+	m.SearchQuery = ""
+}
+
+func (m *Model) FilterSummary() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	parts := []string{}
+	if m.Paused {
+		parts = append(parts, "PAUSED")
+	}
+	if m.FilterSeverity != "" {
+		parts = append(parts, "LVL="+string(m.FilterSeverity))
+	}
+	if m.FilterType != "" {
+		parts = append(parts, "TYPE="+string(m.FilterType))
+	}
+	if m.FilterIP != "" {
+		parts = append(parts, "IP="+m.FilterIP)
+	}
+	if m.FilterRuleID != "" {
+		parts = append(parts, "RULE="+m.FilterRuleID)
+	}
+	if m.SearchQuery != "" {
+		parts = append(parts, "Q="+m.SearchQuery)
+	}
+	if len(parts) == 0 {
+		return "ALL"
+	}
+	return strings.Join(parts, " ")
 }
