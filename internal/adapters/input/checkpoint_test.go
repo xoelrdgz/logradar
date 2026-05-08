@@ -70,6 +70,7 @@ func TestCheckpointOffsetForFileRejectsCopytruncateRotation(t *testing.T) {
 func TestCheckpointOffsetForFileRejectsDifferentFileIdentity(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "access.log")
+	replacementPath := filepath.Join(dir, "access.log.replacement")
 	if err := os.WriteFile(logPath, []byte("one\ntwo\n"), 0600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -78,15 +79,22 @@ func TestCheckpointOffsetForFileRejectsDifferentFileIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("checkpointForFile() error = %v", err)
 	}
-	if err := os.Remove(logPath); err != nil {
-		t.Fatalf("Remove() error = %v", err)
-	}
-	if err := os.WriteFile(logPath, []byte("one\ntwo\nthree\n"), 0600); err != nil {
+	if err := os.WriteFile(replacementPath, []byte("one\ntwo\nthree\n"), 0600); err != nil {
 		t.Fatalf("replacement WriteFile() error = %v", err)
+	}
+	replacementState, err := checkpointForFile(replacementPath, 4)
+	if err != nil {
+		t.Fatalf("replacement checkpointForFile() error = %v", err)
 	}
 
 	if state.Device == 0 && state.Inode == 0 {
 		t.Skip("file identity is not available on this platform")
+	}
+	if state.Device == replacementState.Device && state.Inode == replacementState.Inode {
+		t.Skip("filesystem reported the same identity for two existing files")
+	}
+	if err := os.Rename(replacementPath, logPath); err != nil {
+		t.Fatalf("replacement Rename() error = %v", err)
 	}
 	if _, ok := checkpointOffsetForFile(logPath, state); ok {
 		t.Fatal("checkpointOffsetForFile() ok = true, want false for replacement file")
