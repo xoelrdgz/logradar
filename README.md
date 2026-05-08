@@ -1,8 +1,8 @@
 # LogRadar
 
-LogRadar analiza logs HTTP y emite alertas para patrones como SQLi, XSS, path traversal, RCE, LFI, Log4Shell, fuerza bruta, abuso de rate limit e IPs maliciosas cargadas desde ficheros locales.
+LogRadar analyzes HTTP access logs and emits alerts for patterns such as SQLi, XSS, path traversal, RCE, LFI, Log4Shell, brute force attempts, rate-limit abuse, and malicious IPs loaded from local files.
 
-## Uso Rapido
+## Quick Start
 
 ```bash
 make build
@@ -12,33 +12,33 @@ journalctl -u nginx -o cat | ./bin/logradar analyze --stdin --no-tui
 ./bin/logradar analyze --log ./access.log --batch --json
 ```
 
-`--batch` termina al llegar a EOF y devuelve codigo `2` si se emitieron alertas activas.
+`--batch` exits at EOF and returns code `2` when active alerts were emitted.
 
-## Formatos
+## Formats
 
-- `combined`: IP, metodo, path, status, bytes y User-Agent.
-- `json`: anade headers, cookies y body.
-- `auto`: intenta JSON y cae a combined.
+- `combined`: IP, method, path, status, bytes, and User-Agent.
+- `json`: includes headers, cookies, and body.
+- `auto`: tries JSON first and falls back to combined.
 
-Ver [docs/log-formats.md](docs/log-formats.md).
+See [docs/log-formats.md](docs/log-formats.md).
 
-## Configuracion
+## Configuration
 
-LogRadar busca configuracion en:
+LogRadar looks for configuration in:
 
 1. `--config /path/config.yaml`
 2. `./configs/config.yaml`
 3. `/etc/logradar/config.yaml`
 
-Las variables `LOGRADAR_*` pueden sobrescribir claves de configuracion. Ver [docs/configuration.md](docs/configuration.md).
+`LOGRADAR_*` environment variables can override configuration keys. See [docs/configuration.md](docs/configuration.md).
 
-## Salidas
+## Outputs
 
-- TUI interactiva por defecto.
-- JSON Lines con `--json` o `output.json.enabled=true`.
-- Prometheus en `/metrics`, readiness en `/ready` y liveness en `/live`.
+- Interactive TUI by default.
+- JSON Lines with `--json` or `output.json.enabled=true`.
+- Prometheus metrics on `/metrics`, readiness on `/ready`, and liveness on `/live`.
 
-El esquema de alerta esta en [docs/alert-schema.md](docs/alert-schema.md).
+The alert schema is documented in [docs/alert-schema.md](docs/alert-schema.md).
 
 ## Docker
 
@@ -48,19 +48,19 @@ LOGRADAR_LOG_FILE=/var/log/nginx/access.log docker compose --profile file up --b
 docker compose --profile demo --profile monitoring up --build
 ```
 
-Grafana no forma parte del despliegue mantenido. La monitorizacion mantenida es Prometheus. Ver [docs/monitoring.md](docs/monitoring.md).
+Grafana is not part of the maintained deployment. The maintained monitoring path is Prometheus. See [docs/monitoring.md](docs/monitoring.md).
 
-## Documentacion
+## Documentation
 
-- [Configuracion](docs/configuration.md)
-- [Formatos de log](docs/log-formats.md)
-- [Deteccion](docs/detection.md)
-- [Monitorizacion](docs/monitoring.md)
-- [Despliegue](docs/deployment.md)
+- [Configuration](docs/configuration.md)
+- [Log formats](docs/log-formats.md)
+- [Detection](docs/detection.md)
+- [Monitoring](docs/monitoring.md)
+- [Deployment](docs/deployment.md)
 - [Runbook](docs/runbook.md)
-- [Desarrollo](docs/development.md)
+- [Development](docs/development.md)
 
-## Desarrollo
+## Development
 
 ```bash
 make test
@@ -69,6 +69,6 @@ make fuzz
 make docker
 ```
 
-## Licencia
+## License
 
-GPL-3.0-only. Ver [LICENSE](LICENSE).
+GPL-3.0-only. See [LICENSE](LICENSE).
