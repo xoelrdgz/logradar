@@ -2,6 +2,8 @@
 
 LogRadar analyzes HTTP access logs and emits alerts for patterns such as SQLi, XSS, path traversal, RCE, LFI, Log4Shell, brute force attempts, rate-limit abuse, and malicious IPs loaded from local files.
 
+![TUI](assets/ss1.png)
+
 ## Quick Start
 
 ```bash
@@ -37,6 +39,8 @@ LogRadar looks for configuration in:
 - Interactive TUI by default.
 - JSON Lines with `--json` or `output.json.enabled=true`.
 - Prometheus metrics on `/metrics`, readiness on `/ready`, and liveness on `/live`.
+
+![IPs](assets/ss2.png) ![Alert detail](assets/ss3.png)
 
 The alert schema is documented in [docs/alert-schema.md](docs/alert-schema.md).
 
