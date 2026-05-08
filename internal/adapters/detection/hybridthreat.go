@@ -24,7 +24,6 @@ type HybridThreatStore struct {
 	db         *bolt.DB
 	dbPath     string
 	count      atomic.Int64
-	mu         sync.RWMutex
 	bloomMu    sync.RWMutex
 	hotCache   map[string]*domain.ThreatInfo
 	hotCacheMu sync.RWMutex

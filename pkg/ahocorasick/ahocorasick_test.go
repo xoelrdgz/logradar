@@ -87,7 +87,7 @@ func TestMatcher_NoMatch(t *testing.T) {
 	}
 
 	matches := m.MatchAll("hello world")
-	if matches != nil && len(matches) > 0 {
+	if len(matches) > 0 {
 		t.Errorf("Expected no matches, got %v", matches)
 	}
 }

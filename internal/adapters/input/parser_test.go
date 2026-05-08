@@ -105,9 +105,7 @@ func BenchmarkCombinedLogParser(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		entry, _ := parser.Parse(line)
-		if entry != nil {
-		}
+		_, _ = parser.Parse(line)
 	}
 }
 

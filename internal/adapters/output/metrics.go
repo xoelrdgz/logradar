@@ -42,21 +42,17 @@ type PrometheusMetrics struct {
 	processingDuration        *prometheus.HistogramVec
 	processingDurationSummary *prometheus.SummaryVec
 
-	queueUtilization  prometheus.GaugeFunc
-	workerUtilization prometheus.GaugeFunc
+	queueUtilization prometheus.GaugeFunc
 
-	queueSize         prometheus.GaugeFunc
-	queueCapacity     prometheus.GaugeFunc
-	activeWorkers     prometheus.GaugeFunc
-	configuredWorkers prometheus.GaugeFunc
-	pendingLines      prometheus.GaugeFunc
+	queueSize     prometheus.GaugeFunc
+	queueCapacity prometheus.GaugeFunc
+	activeWorkers prometheus.GaugeFunc
 
-	memoryAllocBytes    prometheus.GaugeFunc
-	memorySysBytes      prometheus.GaugeFunc
-	memoryHeapObjects   prometheus.GaugeFunc
-	goroutinesCount     prometheus.GaugeFunc
-	gcPauseTotalSeconds prometheus.CounterFunc
-	gcLastPauseSeconds  prometheus.GaugeFunc
+	memoryAllocBytes   prometheus.GaugeFunc
+	memorySysBytes     prometheus.GaugeFunc
+	memoryHeapObjects  prometheus.GaugeFunc
+	goroutinesCount    prometheus.GaugeFunc
+	gcLastPauseSeconds prometheus.GaugeFunc
 
 	sloLatencyBucket      *prometheus.CounterVec
 	sloAvailabilityTotal  prometheus.Counter

@@ -301,9 +301,10 @@ type mockObserver struct {
 }
 
 func (m *mockObserver) IncrementLinesProcessedByResult(result string) {
-	if result == "clean" {
+	switch result {
+	case "clean":
 		m.cleanCount.Add(1)
-	} else if result == "malicious" {
+	case "malicious":
 		m.maliciousCount.Add(1)
 	}
 }

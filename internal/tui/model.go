@@ -31,7 +31,6 @@ type Model struct {
 
 	mu         sync.RWMutex
 	alertCount int
-	running    bool
 
 	Paused         bool
 	FilterSeverity domain.AlertLevel

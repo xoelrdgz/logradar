@@ -137,7 +137,7 @@ func (t *SQLTokenizer) Tokenize(input string) []Token {
 		if c == '/' && i+1 < n && input[i+1] == '*' {
 			tokens = append(tokens, Token{Type: TokenComment, Value: "/*"})
 			i += 2
-			for i < n-1 && !(input[i] == '*' && input[i+1] == '/') {
+			for i < n-1 && (input[i] != '*' || input[i+1] != '/') {
 				i++
 			}
 			if i < n-1 {
